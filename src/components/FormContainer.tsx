@@ -62,8 +62,6 @@ if(type !=="delete"){
       relatedData = {classes: studentClasses, grades: studentGrades };
       break;
     case "exam":
-      
-
       const examLessons= await prisma.lesson.findMany({
         where:{
           ...(role === "teacher" ? {teacherId:userId!} : {})
@@ -71,6 +69,15 @@ if(type !=="delete"){
          select: { id: true, name: true },
       });
       relatedData = {lessons: examLessons };
+      break;
+    case "assignment":
+      const assignmentLessons= await prisma.lesson.findMany({
+        where:{
+          ...(role === "teacher" ? {teacherId:userId!} : {})
+        },
+         select: { id: true, name: true },
+      });
+      relatedData = {lessons: assignmentLessons };
       break;
   
     default:

@@ -162,6 +162,7 @@ model Attendance {
   student   Student @relation(fields: [studentId], references: [id])
   lessonId  Int
   lesson    Lesson  @relation(fields: [lessonId], references: [id])
+  @@unique([studentId, lessonId, date])
 }
 
 model Event {

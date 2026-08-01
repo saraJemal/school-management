@@ -2,20 +2,15 @@ import TableSearch from "@/components/TableSearch";
 import Image from "next/image";
 import Pagination from "@/components/pagination";
 import Table from "@/components/Table";
-import Link from "next/link";
-import FormModal from "@/components/FormModal";
 import { ITEM_PER_PAGE } from "@/lib/settings";
 import { prisma } from "@/lib/prisma";
 import { Assignment, Class, Prisma, Subject, Teacher } from "@prisma/client";
 import { LocalDate } from "@/components/LocalDate";
 import { auth } from "@clerk/nextjs/server";
-//import {currentUserId, role} from "@/lib/utils";
+import FormContainer from "@/components/FormContainer";
 
-const {userId, sessionClaims} = auth();
 
- export const role = (sessionClaims?.metadata as {role?:string})?.role;
-  
- export const currentUserId = userId;
+ 
 
 type AssignmentList = Assignment & {
   lesson:{
@@ -24,6 +19,19 @@ type AssignmentList = Assignment & {
   teacher:Teacher;
  };
 };
+
+
+const AssignmentListPage = async({
+  searchParams,
+
+}: {
+  searchParams:{[key:string]:string | undefined};
+}) => {
+
+const {userId, sessionClaims} = auth();
+const role = (sessionClaims?.metadata as {role?:string})?.role;
+const currentUserId = userId;
+
 const columns = [
   {
     header:"Subject Name", 
@@ -63,20 +71,15 @@ const renderRow = (item:AssignmentList) => (
       <div className="flex items-center g-2">
         {(role === "admin" || role === "teacher") && (
           <>
-        <FormModal table="assignment" type="update" data={item}/> 
-        <FormModal table="assignment" type="delete" id={item.id}/>
+        <FormContainer table="assignment" type="update" data={item}/> 
+        <FormContainer table="assignment" type="delete" id={item.id}/>
         </>
           )}
      </div>
     </td>
    </tr>
   );
-const AssignmentListPage = async({
-  searchParams,
 
-}: {
-  searchParams:{[key:string]:string | undefined};
-}) => {
   const params = await searchParams;
   const {page, ...queryParams}= params;
   const p = page? parseInt(page) : 1;
@@ -176,7 +179,7 @@ return(
           <Image src="/sort.png" alt="" width={14} height={14}/>
         </button>
         {role === "admin" && (
-          <FormModal table="assignment" type="create"/>
+          <FormContainer table="assignment" type="create"/>
         )}
       </div>
     </div>

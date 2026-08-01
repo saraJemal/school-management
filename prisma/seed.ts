@@ -213,3 +213,209 @@ main()
     await prisma.$disconnect();
     process.exit(1);
   });
+
+
+
+// import { PrismaClient, UserSex, Day } from "@prisma/client";
+
+// const prisma = new PrismaClient();
+
+// const random = (arr: any[]) => arr[Math.floor(Math.random() * arr.length)];
+
+// const toDateOnly = (d: Date) =>
+//   new Date(d.toISOString().split("T")[0]);
+
+// async function main() {
+//   console.log("Seeding...");
+
+//   // ------------------ ADMINS (2)
+//   await prisma.admin.createMany({
+//     data: [
+//       { id: "admin1", username: "admin1" },
+//       { id: "admin2", username: "admin2" },
+//     ],
+//   });
+
+//   // ------------------ GRADES (6)
+//   const grades = await Promise.all(
+//     Array.from({ length: 6 }).map((_, i) =>
+//       prisma.grade.create({ data: { level: i + 1 } })
+//     )
+//   );
+
+//   // ------------------ CLASSES (6)
+//   const classes = await Promise.all(
+//     grades.map((grade, i) =>
+//       prisma.class.create({
+//         data: {
+//           name: `Class-${i + 1}`,
+//           capacity: 50,
+//           gradeId: grade.id,
+//         },
+//       })
+//     )
+//   );
+
+//   // SUBJECT
+//   const subjectData = [
+//     { name: "Mathematics" },
+//     { name: "Science" },
+//     { name: "English" },
+//     { name: "History" },
+//     { name: "Geography" },
+//     { name: "Physics" },
+//     { name: "Chemistry" },
+//     { name: "Biology" },
+//     { name: "Computer Science" },
+//     { name: "Art" },
+//   ];
+
+//   for (const subject of subjectData) {
+//     await prisma.subject.create({ data: subject });
+//   }
+
+//   // ------------------ TEACHERS (15)
+//   const teachers = await Promise.all(
+//     Array.from({ length: 15 }).map((_, i) =>
+//       prisma.teacher.create({
+//         data: {
+//           id: `teacher${i + 1}`,
+//           username: `teacher${i + 1}`,
+//           name: `Teacher${i + 1}`,
+//           surname: "Smith",
+//           address: "School",
+//           bloodType: "O+",
+//           sex: random([UserSex.MALE, UserSex.FEMALE]),
+//           birthday: new Date(`1980-01-${(i % 28) + 1}`),
+//         },
+//       })
+//     )
+//   );
+
+//   // ------------------ LESSONS (30)
+//   const lessons = await Promise.all(
+//     Array.from({ length: 30 }).map((_, i) =>
+//       prisma.lesson.create({
+//         data: {
+//           name: `Lesson-${i + 1}`,
+//           day: random(Object.values(Day)),
+//           startTime: new Date(`2026-08-01T0${i % 8}:00:00`),
+//           endTime: new Date(`2026-08-01T0${(i % 8) + 1}:00:00`),
+//           subjectId: random(subjectData).id,
+//           classId: random(classes).id,
+//           teacherId: random(teachers).id,
+//         },
+//       })
+//     )
+//   );
+
+//   // ------------------ PARENTS (25)
+//   const parents = await Promise.all(
+//     Array.from({ length: 25 }).map((_, i) =>
+//       prisma.parent.create({
+//         data: {
+//           id: `parent${i + 1}`,
+//           username: `parent${i + 1}`,
+//           name: `Parent${i + 1}`,
+//           surname: "Family",
+//           phone: `90000000${i + 1}`, // unique
+//           address: "City",
+//         },
+//       })
+//     )
+//   );
+
+//   // ------------------ STUDENTS (50)
+//   const students = await Promise.all(
+//     Array.from({ length: 50 }).map((_, i) =>
+//       prisma.student.create({
+//         data: {
+//           id: `student${i + 1}`,
+//           username: `student${i + 1}`,
+//           name: `Student${i + 1}`,
+//           surname: "Test",
+//           address: "City",
+//           bloodType: "A+",
+//           sex: random([UserSex.MALE, UserSex.FEMALE]),
+//           parentId: parents[i % parents.length].id,
+//           classId: random(classes).id,
+//           gradeId: random(grades).id,
+//           birthday: new Date(`2010-01-${(i % 28) + 1}`),
+//         },
+//       })
+//     )
+//   );
+
+//   // ------------------ EXAMS (10)
+//   const exams = await Promise.all(
+//     Array.from({ length: 10 }).map((_, i) =>
+//       prisma.exam.create({
+//         data: {
+//           title: `Exam-${i + 1}`,
+//           startTime: new Date(),
+//           endTime: new Date(),
+//           lessonId: random(lessons).id,
+//         },
+//       })
+//     )
+//   );
+
+//   // ------------------ ASSIGNMENTS (10)
+//   const assignments = await Promise.all(
+//     Array.from({ length: 10 }).map((_, i) =>
+//       prisma.assignment.create({
+//         data: {
+//           title: `Assignment-${i + 1}`,
+//           startDate: new Date(),
+//           dueDate: new Date(),
+//           lessonId: random(lessons).id,
+//         },
+//       })
+//     )
+//   );
+
+//   // ------------------ RESULTS (10)
+//   await prisma.result.createMany({
+//     data: Array.from({ length: 10 }).map((_, i) => ({
+//       score: Math.floor(Math.random() * 100),
+//       studentId: students[i].id,
+//       examId: exams[i]?.id ?? null,
+//       assignmentId: null,
+//     })),
+//   });
+
+//   // ------------------ ATTENDANCE (10)  NO DUPLICATES
+//   const used = new Set();
+
+//   const attendanceData = [];
+
+//   for (let i = 0; i < 10; i++) {
+//     let student = random(students);
+//     let lesson = random(lessons);
+//     let date = toDateOnly(new Date());
+
+//     let key = `${student.id}-${lesson.id}-${date.toISOString()}`;
+
+//     if (used.has(key)) continue;
+
+//     used.add(key);
+
+//     attendanceData.push({
+//       studentId: student.id,
+//       lessonId: lesson.id,
+//       date,
+//       present: Math.random() > 0.2,
+//     });
+//   }
+
+//   await prisma.attendance.createMany({
+//     data: attendanceData,
+//     skipDuplicates: true,
+//   });
+
+//   console.log(" Done seeding");
+// }
+
+// main()
+//   .catch(console.error)
+//   .finally(() => prisma.$disconnect());

@@ -1,13 +1,14 @@
-import AttendanceChart from "@/components/AttendanceChart";
 import UserCard from "@/components/userCard";
 import FinanceChart from "@/components/FinanceChart";
-import EventCalendar from "@/components/EventCalendar";
 import Announcements from "@/components/Announcements";
 import CountChartContainer from "@/components/CountChartContainer";
 import AttendanceChartContainer from "@/components/AttendanceChartContainer";
 import EventCalendarContainer from "@/components/EventCalendarContainer";
+
+
 const AdminPage = async({
   searchParams,
+  
 }:{searchParams:{[keys:string]: string | undefined};
 }) => {
   return (

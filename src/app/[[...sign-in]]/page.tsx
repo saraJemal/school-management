@@ -16,7 +16,7 @@ useEffect(() => {
 
     if (isSignedIn) {
       const role = user?.publicMetadata?.role
-
+      
       if (role) {
         router.replace(`/${role}`)
       } else {

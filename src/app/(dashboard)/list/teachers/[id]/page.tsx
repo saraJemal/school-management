@@ -138,6 +138,11 @@ const role = (sessionClaims?.metadata as {role?:string})?.role;
             <Link className="p-3 rounded-md bg-saraPurpleLight" href={`/list/lessons?teacherId=${"teacher2"}`}>Teacher's Lessons</Link>
             <Link className="p-3 rounded-md bg-saraYellowLight" href={`/list/exams?teacherId=${"teacher2"}`}>Teacher's Exams</Link>
             <Link className="p-3 rounded-md bg-saraSkyLight" href={`/list/assignments?teacherId=${"teacher2"}`}>Teacher's Assignments</Link>
+            <Link
+            className="p-3 rounded-md bg-green-200"
+             href={`/list/teachers/${teacher.id}/attendance`}>
+            Attendance
+          </Link>
           </div>
         </div>
         <Performance/>

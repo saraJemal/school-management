@@ -1,5 +1,5 @@
 "use client"
-import { deleteClass, deleteExam, deleteStudent, deleteSubject, deleteTeacher } from "@/lib/actions";
+import { deleteAssignment, deleteClass, deleteExam, deleteStudent, deleteSubject, deleteTeacher } from "@/lib/actions";
 import dynamic from "next/dynamic";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
@@ -7,6 +7,7 @@ import { Dispatch, JSX, SetStateAction, useEffect, useState } from "react";
 import { useFormState } from "react-dom";
 import { toast } from "react-toastify";
 import { FormContainerProps } from "./FormContainer";
+
 
 
 
@@ -18,7 +19,7 @@ const deleteActionMap = {
   parent: deleteSubject,
   lesson: deleteSubject,
   exam: deleteExam,
-  assignment: deleteSubject,
+  assignment: deleteAssignment,
   result: deleteSubject,
   attendance: deleteSubject,
   event: deleteSubject,
@@ -41,6 +42,9 @@ const ClassForm = dynamic(()=>import("./forms/ClassForm"),{
   loading:()=><h1>Loading...</h1>,
 });
 const ExamForm = dynamic(()=>import("./forms/ExamForm"),{
+  loading:()=><h1>Loading...</h1>,
+});
+const AssignmentForm = dynamic(()=>import("./forms/AssignmentForm"),{
   loading:()=><h1>Loading...</h1>,
 });
 const forms:{
@@ -86,6 +90,15 @@ const forms:{
     relatedData = {relatedData}
     />
   ),
+  assignment:( setOpen, type, data, relatedData )=>(
+    <AssignmentForm 
+    type={type} 
+    data={data} 
+    setOpen = {setOpen} 
+    relatedData = {relatedData}
+    />
+  ),
+
 }; 
 const FormModal = ({
   table,
