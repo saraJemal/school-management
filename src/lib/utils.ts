@@ -8,49 +8,67 @@ import { auth } from "@clerk/nextjs/server";
 // export const currentUserId = userId;
 
 
-const currentWorkWeek = () => {
+export const currentWorkWeek = () => {
   const today = new Date();
-  const dayOfWeek = today.getDay();
+  const dayOfWeek = today.getDay(); // 0=Sun, 6=Sat
   const startOfWeek = new Date(today);
 
-  if (dayOfWeek === 0){
-   startOfWeek.setDate(today.getDate() + 1);
-  }
-  if (dayOfWeek === 6){
-   startOfWeek.setDate(today.getDate() + 2);
-  }else{
+  if (dayOfWeek === 0) {
+    // Sunday → next Monday
+    startOfWeek.setDate(today.getDate() + 1);
+  } else if (dayOfWeek === 6) {
+    // Saturday → next Monday
+    startOfWeek.setDate(today.getDate() + 2);
+  } else {
+    // Weekday → current Monday
     startOfWeek.setDate(today.getDate() - (dayOfWeek - 1));
   }
-  startOfWeek.setHours(0,0,0,0);
-  return {startOfWeek};
+
+  startOfWeek.setHours(0, 0, 0, 0);
+
+  return { startOfWeek };
 };
+export const adjustScheduleToCurrentWeek = (lessons: any[]) => {
+  const { startOfWeek } = currentWorkWeek();
 
-export const adjustScheduleToCurrentWeek = (lessons:{title:string; start:Date; end:Date}[]):{title:string; start:Date; end:Date}[] =>{
-  const { startOfWeek} = currentWorkWeek()
-  return lessons.map((lesson)=>{
-    const lessonDayOfWeek = lesson.start.getDay();
+  const dayMap: Record<string, number> = {
+    MONDAY: 0,
+    TUESDAY: 1,
+    WEDNESDAY: 2,
+    THURSDAY: 3,
+    FRIDAY: 4,
+    SATURDAY: 5,
+    SUNDAY: 6,
+  };
 
-    const daysFromMonday = lessonDayOfWeek === 0 ? 6 :lessonDayOfWeek - 1;
-    const adjustedStartDate = new Date(startOfWeek);
+  return lessons.map((lesson) => {
+  const adjustedStart = new Date(startOfWeek);
 
-    adjustedStartDate.setDate(startOfWeek.getDate() + daysFromMonday);
-    adjustedStartDate.setHours(
-      lesson.start.getHours(),
-      lesson.start.getMinutes(),
-      lesson.start.getSeconds(),
-    );
+  adjustedStart.setDate(
+    startOfWeek.getDate() + dayMap[lesson.day]
+  );
 
-    const adjustedEndDate = new Date(adjustedStartDate);
-    adjustedEndDate.setHours(
-      lesson.end.getHours(),
-      lesson.end.getMinutes(),
-      lesson.end.getSeconds(),
-    );
+  const startTime = new Date(lesson.start);
+  const endTime = new Date(lesson.end);
 
-    return{
-      title:lesson.title,
-      start:adjustedStartDate,
-      end:adjustedEndDate,
-    }
-  });
+  adjustedStart.setHours(
+    startTime.getHours(),
+    startTime.getMinutes(),
+    0
+  );
+
+  const adjustedEnd = new Date(adjustedStart);
+
+  adjustedEnd.setHours(
+    endTime.getHours(),
+    endTime.getMinutes(),
+    0
+  );
+
+  return {
+    title: lesson.title,
+    start: adjustedStart,
+    end: adjustedEnd,
+  };
+  })
 };

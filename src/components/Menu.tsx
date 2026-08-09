@@ -130,9 +130,12 @@ const Menu = async() => {
           {i.items.map((item) => {
             if(item.visible.includes(role)){
               return(
-            <Link href={item.href} key={item.label} className="flex items-center justify-center lg:justify-start gap-4 text-gray-500 py-2 md:px-2 rounded-md hover:bg-badirStar">
+            <Link href={item.href} key={item.label} className="group relative flex items-center justify-center lg:justify-start gap-4 text-gray-500 py-2 md:px-2 rounded-md hover:bg-badirStar">
             <Image src={item.icon} alt={item.label} width={20} height={20}/>
-            <span className="hidden lg:block">{item.label}</span> 
+            <span className="hidden lg:block">{item.label}</span>
+            <span className="pointer-events-none absolute left-full ml-2 top-1/2 -translate-y-1/2 whitespace-nowrap rounded bg-gray-800 px-2 py-1 text-xs text-white opacity-0 transition-opacity duration-200 group-hover:opacity-100 lg:hidden z-50">
+              {item.label}
+            </span>
             </Link>
               );
           }})}

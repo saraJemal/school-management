@@ -1,5 +1,5 @@
 "use client"
-import { deleteAssignment, deleteClass, deleteExam, deleteStudent, deleteSubject, deleteTeacher } from "@/lib/actions";
+import { deleteAssignment, deleteAttendance, deleteClass, deleteExam, deleteLesson, deleteStudent, deleteSubject, deleteTeacher } from "@/lib/actions";
 import dynamic from "next/dynamic";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
@@ -17,11 +17,11 @@ const deleteActionMap = {
   teacher: deleteTeacher,
   student: deleteStudent,
   parent: deleteSubject,
-  lesson: deleteSubject,
+  lesson: deleteLesson,
   exam: deleteExam,
   assignment: deleteAssignment,
   result: deleteSubject,
-  attendance: deleteSubject,
+  attendance: deleteAttendance,
   event: deleteSubject,
   announcement: deleteSubject,
 };
@@ -46,6 +46,12 @@ const ExamForm = dynamic(()=>import("./forms/ExamForm"),{
 });
 const AssignmentForm = dynamic(()=>import("./forms/AssignmentForm"),{
   loading:()=><h1>Loading...</h1>,
+});
+const AttendanceForm = dynamic(() => import("./forms/AttendanceForm"), {
+  loading: () => <h1>Loading...</h1>,
+});
+const LessonForm = dynamic(() => import("./forms/LessonForm"), {
+  loading: () => <h1>Loading...</h1>,
 });
 const forms:{
   [key:string]:(setOpen:Dispatch<SetStateAction<boolean>>,type:"create"|"update", data?:any, relatedData?:any)=> JSX.Element;
@@ -96,6 +102,22 @@ const forms:{
     data={data} 
     setOpen = {setOpen} 
     relatedData = {relatedData}
+    />
+  ),
+  attendance: (setOpen, type, data, relatedData) => (
+    <AttendanceForm
+      type={type}
+      data={data}
+      setOpen={setOpen}
+      relatedData={relatedData}
+    />
+  ),
+  lesson: (setOpen, type, data, relatedData) => (
+    <LessonForm
+      type={type}
+      data={data}
+      setOpen={setOpen}
+      relatedData={relatedData}
     />
   ),
 

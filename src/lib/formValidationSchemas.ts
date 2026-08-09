@@ -1,4 +1,5 @@
 import z from "zod";
+import { Day } from "@prisma/client";
 
 export const subjectSchema = z.object({
   id: z.coerce.number().optional(),
@@ -95,3 +96,61 @@ export const assignmentSchema = z.object({
 });
 
 export type AssignmentSchema = z.infer<typeof assignmentSchema>; 
+
+export const attendanceSchema = z.object({
+  id: z.number().optional(),
+  date: z.coerce.date(),
+  present: z.coerce.boolean(),
+  studentId: z.string(), // STRING 
+  lessonId: z.number(),  // NUMBER
+});
+
+export type AttendanceSchema = z.infer<typeof attendanceSchema>;
+
+
+const parseTime = (time: string) => {
+  const [h, m] = time.split(":");
+
+  const d = new Date();
+  d.setHours(Number(h));
+  d.setMinutes(Number(m));
+  d.setSeconds(0);
+  d.setMilliseconds(0);
+
+  return d;
+};
+
+export const lessonSchema = z
+  .object({
+    id: z.number().optional(),
+
+    name: z.string().min(1),
+
+    day: z.nativeEnum(Day),
+
+    startTime: z.preprocess(
+      (val) => (typeof val === "string" ? parseTime(val) : val),
+      z.date()
+    ),
+
+    endTime: z.preprocess(
+      (val) => (typeof val === "string" ? parseTime(val) : val),
+      z.date()
+    ),
+
+    subjectId: z.coerce.number(),
+    classId: z.coerce.number(),
+
+    teacherId: z.string().min(1),
+  })
+  .superRefine((data, ctx) => {
+    if (data.endTime <= data.startTime) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "End time must be after start time",
+        path: ["endTime"],
+      });
+    }
+  });
+
+export type LessonSchema = z.infer<typeof lessonSchema>;

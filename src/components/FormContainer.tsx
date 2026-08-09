@@ -79,7 +79,48 @@ if(type !=="delete"){
       });
       relatedData = {lessons: assignmentLessons };
       break;
-  
+
+    // case "attendance":
+    //   const attendanceStudents = await prisma.student.findMany({
+
+
+    //     select: { id: true, name: true, surname: true },
+    //   });
+
+  case "attendance":
+      const attendanceLessons = await prisma.lesson.findMany({
+        where: {
+          ...(role === "teacher"
+            ? {
+                class: {
+                  supervisorId: userId!,
+                },
+              }
+            : {}),
+        },
+        select: { id: true, name: true },
+      });
+
+      relatedData = { lessons: attendanceLessons };
+      break;
+  case "lesson":
+      const lessonsData = await prisma.lesson.findMany();
+
+      const teachers = await prisma.teacher.findMany({
+        select: { id: true, name: true, surname: true },
+      });
+
+      const subjects = await prisma.subject.findMany({
+        select: { id: true, name: true },
+      });
+
+      const classes = await prisma.class.findMany({
+        select: { id: true, name: true },
+      });
+
+      relatedData = { teachers, subjects, classes };
+      break;
+   
     default:
       break;
   }

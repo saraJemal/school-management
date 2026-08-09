@@ -1,7 +1,7 @@
 "use server"
 
 import { revalidatePath } from "next/cache";
-import { AssignmentSchema, ClassSchema, ExamSchema, StudentSchema, SubjectSchema, TeacherSchema } from "./formValidationSchemas"
+import { AssignmentSchema, AttendanceSchema, ClassSchema, ExamSchema, LessonSchema, StudentSchema, SubjectSchema, TeacherSchema } from "./formValidationSchemas"
 import { prisma } from "./prisma";
 import { auth, clerkClient } from "@clerk/nextjs/server";
 import { success } from "zod";
@@ -605,3 +605,203 @@ export const deleteAssignment = async(
     return{ success: false, error: true };
   }
 };          
+//--------------------------Attendance Action--------
+
+//---------------CREATE-------------
+
+// ATTENDANCE ACTION
+
+// CREATE
+export const createAttendance = async (
+  currentState: CurrentState,
+  data: AttendanceSchema
+) => {
+  const { userId, sessionClaims } = auth();
+  const role = (sessionClaims?.metadata as { role?: string })?.role;
+
+  try {
+    if (role === "teacher") {
+      const lesson = await prisma.lesson.findFirst({
+        where: {
+          id: data.lessonId,
+          class: {
+            supervisorId: userId!,
+          },
+        },
+      });
+
+      if (!lesson) {
+        return { success: false, error: true };
+      }
+    }
+
+    await prisma.attendance.create({
+      data: {
+        date: data.date,
+        present: data.present,
+        studentId: data.studentId,
+        lessonId: data.lessonId,
+      },
+    });
+
+    return { success: true, error: false };
+  } catch (err) {
+    console.log(err);
+    return { success: false, error: true };
+  }
+};
+
+//--------------------------UPDATE-------------
+
+export const updateAttendance = async (
+  currentState: CurrentState,
+  data: AttendanceSchema
+) => {
+  const { userId, sessionClaims } = auth();
+  const role = (sessionClaims?.metadata as { role?: string })?.role;
+
+  try {
+    if (role === "teacher") {
+      const lesson = await prisma.lesson.findFirst({
+        where: {
+          id: data.lessonId,
+          class: {
+            supervisorId: userId!,
+          },
+        },
+      });
+
+      if (!lesson) {
+        return { success: false, error: true };
+      }
+    }
+
+    await prisma.attendance.update({
+      where: {
+        id: data.id,
+      },
+      data: {
+        date: data.date,
+        present: data.present,
+        studentId: data.studentId,
+        lessonId: data.lessonId,
+      },
+    });
+
+    return { success: true, error: false };
+  } catch (err) {
+    console.log(err);
+    return { success: false, error: true };
+  }
+};
+
+//--------------------------DELETE-------------
+
+export const deleteAttendance = async (
+  currentState: CurrentState,
+  data: FormData
+) => {
+  const id = data.get("id") as string;
+
+  const { userId, sessionClaims } = auth();
+  const role = (sessionClaims?.metadata as { role?: string })?.role;
+
+  try {
+    await prisma.attendance.delete({
+      where: {
+        id: parseInt(id),
+        ...(role === "teacher"
+          ? {
+              lesson: {
+                class: {
+                  supervisorId: userId!,
+                },
+              },
+            }
+          : {}),
+      },
+    });
+
+    return { success: true, error: false };
+  } catch (err) {
+    console.log(err);
+    return { success: false, error: true };
+  }
+};
+
+//----------Lesson Action-------
+
+
+// CREATE
+export const createLesson = async (
+  currentState: CurrentState,
+  data: LessonSchema
+) => {
+  try {
+    await prisma.lesson.create({
+      data: {
+        name: data.name,
+        day: data.day,
+        startTime:data.startTime,
+        endTime: data.endTime,
+        subjectId: data.subjectId,
+        classId: data.classId,
+        teacherId: data.teacherId,
+      },
+    });
+
+    return { success: true, error: false };
+  } catch (err) {
+    console.log(err);
+    return { success: false, error: true };
+  }
+};
+
+// UPDATE
+export const updateLesson = async (
+  currentState: CurrentState,
+  data: LessonSchema
+) => {
+  try {
+    await prisma.lesson.update({
+      where: {
+        id: data.id,
+      },
+      data: {
+        name: data.name,
+        day: data.day,
+        startTime:data.startTime,
+        endTime: data.endTime,
+        subjectId: data.subjectId,
+        classId: data.classId,
+        teacherId: data.teacherId,
+      },
+    });
+
+    return { success: true, error: false };
+  } catch (err) {
+    console.log(err);
+    return { success: false, error: true };
+  }
+};
+
+// DELETE
+export const deleteLesson = async (
+  currentState: CurrentState,
+  data: FormData
+) => {
+  const id = data.get("id") as string;
+
+  try {
+    await prisma.lesson.delete({
+      where: {
+        id: parseInt(id),
+      },
+    });
+
+    return { success: true, error: false };
+  } catch (err) {
+    console.log(err);
+    return { success: false, error: true };
+  }
+};
