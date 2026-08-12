@@ -110,7 +110,7 @@ const AttendanceForm = ({
           />
         )}
 
-        {/* Lesson SELECT (same as ExamForm) */}
+        {/* Lesson SELECT */}
         <div className="flex flex-col gap-2 w-full md:w-1/4">
           <label className="text-xs text-gray-500">Lesson</label>
           <select

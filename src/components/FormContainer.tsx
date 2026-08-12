@@ -120,6 +120,12 @@ if(type !=="delete"){
 
       relatedData = { teachers, subjects, classes };
       break;
+  case "parent":
+      const parentStudents= await prisma.student.findMany({
+        select:{ id:true, name:true }, 
+      });
+      relatedData = {students: parentStudents };
+      break; 
    
     default:
       break;
