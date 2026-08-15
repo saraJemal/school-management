@@ -16,7 +16,7 @@ export const classSchema = z.object({
   name: z.string().min(1, { message: "Class name is required!" }),
   capacity: z.coerce.number().min(1, { message: "Capacity name is required!" }),
   gradeId: z.coerce.number().min(1, { message: "Grade id is required!" }),
-  supervisorId: z.coerce.string().optional(),
+  homeRoomTeacherId: z.coerce.string().optional(),
   
 });
 

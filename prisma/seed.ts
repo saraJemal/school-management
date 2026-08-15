@@ -22,8 +22,9 @@ async function main() {
   // ------------------ GRADES
   await prisma.grade.createMany({
     data: Array.from({ length: 6 }).map((_, i) => ({
-      level: i + 1,
-    })),
+    level: i + 1,
+    name: `Level ${i + 1}`,
+  })),
     skipDuplicates: true,
   });
 

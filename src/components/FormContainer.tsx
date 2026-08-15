@@ -93,7 +93,7 @@ if(type !=="delete"){
           ...(role === "teacher"
             ? {
                 class: {
-                  supervisorId: userId!,
+                  homeRoomTeacherId: userId!,
                 },
               }
             : {}),

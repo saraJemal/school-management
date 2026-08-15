@@ -131,7 +131,7 @@ const role = (sessionClaims?.metadata as {role?:string})?.role;
         <div className="bg-white p-4 rounded-md">
           <h1 className="text-xl font-semibold">Shortcuts</h1>
           <div className="mt-4 flex gap-4 flex-wrap text-xs text-gray-500">
-            <Link className="p-3 rounded-md bg-saraSkyLight" href={`/list/classes?supervisorId=${"teacher2"}`}>Teacher's Classes</Link>
+            <Link className="p-3 rounded-md bg-saraSkyLight" href={`/list/classes?homeRoomTeacherId=${"teacher2"}`}>Teacher's Classes</Link>
             <Link className="p-3 rounded-md bg-saraSkyLight" href={`/list/students?teacherId=${"teacher2"}`}>Teacher's Students</Link>
             <Link className="p-3 rounded-md bg-saraPurpleLight" href={`/list/lessons?teacherId=${"teacher2"}`}>Teacher's Lessons</Link>
             <Link className="p-3 rounded-md bg-saraYellowLight" href={`/list/exams?teacherId=${"teacher2"}`}>Teacher's Exams</Link>

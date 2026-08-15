@@ -625,7 +625,7 @@ export const createAttendance = async (
         where: {
           id: data.lessonId,
           class: {
-            supervisorId: userId!,
+            homeRoomTeacherId: userId!,
           },
         },
       });
@@ -666,7 +666,7 @@ export const updateAttendance = async (
         where: {
           id: data.lessonId,
           class: {
-            supervisorId: userId!,
+            homeRoomTeacherId: userId!,
           },
         },
       });
@@ -714,7 +714,7 @@ export const deleteAttendance = async (
           ? {
               lesson: {
                 class: {
-                  supervisorId: userId!,
+                  homeRoomTeacherId: userId!,
                 },
               },
             }

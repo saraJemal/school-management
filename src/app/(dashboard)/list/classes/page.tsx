@@ -10,7 +10,7 @@ import { ITEM_PER_PAGE } from "@/lib/settings";
 import FormContainer from "@/components/FormContainer";
 import { auth } from "@clerk/nextjs/server";
 
-type ClassList = Class & {supervisor: Teacher};
+type ClassList = Class & {homeRoomTeacher: Teacher};
 
 
 const ClassListPage = async({
@@ -38,8 +38,8 @@ const columns = [
     className:"hidden md:table-cell",
   },
   {
-    header:"Supervisor", 
-    accessor:"supervisor",
+    header:"Home Room Teacher",
+    accessor:"homeRoomTeacher",
     className:"hidden md:table-cell",
   },
   ...(role === "admin"
@@ -56,7 +56,7 @@ const columns = [
     <td className="flex items-center gap-4 p-4">{item.name}</td>
     <td className="hidden md:table-cell">{item.capacity}</td>
     <td className="hidden md:table-cell">{item.name[0]}</td>
-    <td className="hidden md:table-cell">{item.supervisor.name + " " + item.supervisor.surname}</td>
+    <td className="hidden md:table-cell">{item.homeRoomTeacher.name + " " + item.homeRoomTeacher.surname}</td>
     <td>
       <div className="flex items-center g-2">
         {role === "admin" && (
@@ -80,8 +80,8 @@ const columns = [
     for(const [key,value] of Object.entries(queryParams)){
      if(value!== undefined){
       switch(key){
-        case "supervisorId":
-          query.supervisorId = value;
+        case "homeRoomTeacherId":
+          query.homeRoomTeacherId = value;
           break;
         case "search":
           query.name = {contains:value, mode:"insensitive"}
@@ -96,7 +96,7 @@ const columns = [
    prisma.class.findMany({
     where: query,
     include:{
-      supervisor:true,
+      homeRoomTeacher:true,
     },
     take:ITEM_PER_PAGE,
     skip:ITEM_PER_PAGE*(p-1), 

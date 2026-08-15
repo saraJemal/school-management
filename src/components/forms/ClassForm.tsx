@@ -84,16 +84,16 @@ const ClassForm = ({
         />
         )}
         <div className="flex flex-col gap-2 w-full md:w-1/4">
-          <label className="text-xs text-gray-500 ">Supervisor</label>
+          <label className="text-xs text-gray-500 ">Home Room Teacher</label>
           <select
-            className="ring-[1.5px] ring-gray-300 p-2 rounded-md text-sm w-full" {...register("supervisorId")} defaultValue={data?.teachers}>
+            className="ring-[1.5px] ring-gray-300 p-2 rounded-md text-sm w-full" {...register("homeRoomTeacherId")} defaultValue={data?.homeRoomTeacherId}>
               {teachers.map((teacher:{id:string; name:string; surname:string}) => (
-                <option value={teacher.id} key={teacher.id}selected ={data && teacher.id === data.supervisorId}>
+                <option value={teacher.id} key={teacher.id}selected ={data && teacher.id === data.homeRoomTeacherId}>
                   {teacher.name + " " + teacher.surname}</option>
               ))}
           </select>
-          {errors.supervisorId?.message && (<p className="text-xs text-red-500">
-            {errors.supervisorId?.message.toString()}</p>
+          {errors.homeRoomTeacherId?.message && (<p className="text-xs text-red-500">
+            {errors.homeRoomTeacherId?.message.toString()}</p>
           )}
         </div>
         <div className="flex flex-col gap-2 w-full md:w-1/4">
