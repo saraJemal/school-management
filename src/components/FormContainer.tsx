@@ -88,21 +88,45 @@ if(type !=="delete"){
     //   });
 
   case "attendance":
-      const attendanceLessons = await prisma.lesson.findMany({
+      const attendanceClasses = await prisma.class.findMany({
         where: {
           ...(role === "teacher"
             ? {
-                class: {
-                  homeRoomTeacherId: userId!,
-                },
+                homeRoomTeacherId: userId!,
               }
             : {}),
         },
-        select: { id: true, name: true },
+        select: {
+          id: true,
+          name: true,
+        },
       });
 
-      relatedData = { lessons: attendanceLessons };
+      const attendanceClassIds = attendanceClasses.map(
+        (classItem) => classItem.id
+      );
+
+      const attendanceStudents = await prisma.student.findMany({
+        where: {
+          classId: {
+            in: attendanceClassIds,
+          },
+        },
+        select: {
+          id: true,
+          name: true,
+          surname: true,
+          classId: true,
+        },
+      });
+
+      relatedData = {
+        classes: attendanceClasses,
+        students: attendanceStudents,
+      };
+
       break;
+
   case "lesson":
       const lessonsData = await prisma.lesson.findMany();
 

@@ -605,13 +605,12 @@ export const deleteAssignment = async(
     return{ success: false, error: true };
   }
 };          
+
+
 //--------------------------Attendance Action--------
 
 //---------------CREATE-------------
 
-// ATTENDANCE ACTION
-
-// CREATE
 export const createAttendance = async (
   currentState: CurrentState,
   data: AttendanceSchema
@@ -620,19 +619,30 @@ export const createAttendance = async (
   const role = (sessionClaims?.metadata as { role?: string })?.role;
 
   try {
+    // Teachers can only take attendance for their own classes
     if (role === "teacher") {
-      const lesson = await prisma.lesson.findFirst({
+      const classItem = await prisma.class.findFirst({
         where: {
-          id: data.lessonId,
-          class: {
-            homeRoomTeacherId: userId!,
-          },
+          id: data.classId,
+          homeRoomTeacherId: userId!,
         },
       });
 
-      if (!lesson) {
+      if (!classItem) {
         return { success: false, error: true };
       }
+    }
+
+    // Make sure the student belongs to the selected class
+    const student = await prisma.student.findFirst({
+      where: {
+        id: data.studentId,
+        classId: data.classId,
+      },
+    });
+
+    if (!student) {
+      return { success: false, error: true };
     }
 
     await prisma.attendance.create({
@@ -640,7 +650,7 @@ export const createAttendance = async (
         date: data.date,
         present: data.present,
         studentId: data.studentId,
-        lessonId: data.lessonId,
+        classId: data.classId,
       },
     });
 
@@ -661,19 +671,30 @@ export const updateAttendance = async (
   const role = (sessionClaims?.metadata as { role?: string })?.role;
 
   try {
+    // Teachers can only update attendance for their own classes
     if (role === "teacher") {
-      const lesson = await prisma.lesson.findFirst({
+      const classItem = await prisma.class.findFirst({
         where: {
-          id: data.lessonId,
-          class: {
-            homeRoomTeacherId: userId!,
-          },
+          id: data.classId,
+          homeRoomTeacherId: userId!,
         },
       });
 
-      if (!lesson) {
+      if (!classItem) {
         return { success: false, error: true };
       }
+    }
+
+    // Make sure the student belongs to the selected class
+    const student = await prisma.student.findFirst({
+      where: {
+        id: data.studentId,
+        classId: data.classId,
+      },
+    });
+
+    if (!student) {
+      return { success: false, error: true };
     }
 
     await prisma.attendance.update({
@@ -684,9 +705,105 @@ export const updateAttendance = async (
         date: data.date,
         present: data.present,
         studentId: data.studentId,
-        lessonId: data.lessonId,
+        classId: data.classId,
       },
     });
+
+    return { success: true, error: false };
+  } catch (err) {
+    console.log(err);
+    return { success: false, error: true };
+  }
+};
+
+
+//--------------------------SAVE MONTHLY ATTENDANCE-------------
+
+export const saveMonthlyAttendance = async (
+  currentState: CurrentState,
+  data: {
+    classId: number;
+    attendance: {
+      studentId: string;
+      date: string;
+      present: boolean;
+    }[];
+  }
+) => {
+  const { userId, sessionClaims } = auth();
+  const role = (sessionClaims?.metadata as { role?: string })?.role;
+
+  try {
+    // Teachers can only take attendance for their own home-room class
+    if (role === "teacher") {
+      const classItem = await prisma.class.findFirst({
+        where: {
+          id: data.classId,
+          homeRoomTeacherId: userId!,
+        },
+      });
+
+      if (!classItem) {
+        return { success: false, error: true };
+      }
+    }
+
+    // Make sure all submitted students belong to the selected class
+    const students = await prisma.student.findMany({
+      where: {
+        classId: data.classId,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    const validStudentIds = new Set(
+      students.map((student) => student.id)
+    );
+
+    for (const record of data.attendance) {
+      if (!validStudentIds.has(record.studentId)) {
+        return { success: false, error: true };
+      }
+    }
+
+    // Create or update attendance records
+
+    await prisma.$transaction(
+      data.attendance.map((record) => {
+        // record.date is expected to be YYYY-MM-DD
+        const [year, month, day] = record.date
+          .split("-")
+          .map(Number);
+
+        // Create the date at midnight using the local calendar date.
+        const attendanceDate = new Date(
+          year,
+          month - 1,
+          day
+        );
+
+        return prisma.attendance.upsert({
+          where: {
+            studentId_classId_date: {
+              studentId: record.studentId,
+              classId: data.classId,
+              date: attendanceDate,
+            },
+          },
+          update: {
+            present: record.present,
+          },
+          create: {
+            studentId: record.studentId,
+            classId: data.classId,
+            date: attendanceDate,
+            present: record.present,
+          },
+        });
+      })
+    );
 
     return { success: true, error: false };
   } catch (err) {
@@ -712,10 +829,8 @@ export const deleteAttendance = async (
         id: parseInt(id),
         ...(role === "teacher"
           ? {
-              lesson: {
-                class: {
-                  homeRoomTeacherId: userId!,
-                },
+              class: {
+                homeRoomTeacherId: userId!,
               },
             }
           : {}),
@@ -729,8 +844,8 @@ export const deleteAttendance = async (
   }
 };
 
-//----------Lesson Action-------
 
+//--------------------------LESSON ACTION----------------
 
 // CREATE
 export const createLesson = async (
@@ -742,7 +857,7 @@ export const createLesson = async (
       data: {
         name: data.name,
         day: data.day,
-        startTime:data.startTime,
+        startTime: data.startTime,
         endTime: data.endTime,
         subjectId: data.subjectId,
         classId: data.classId,
@@ -762,6 +877,10 @@ export const updateLesson = async (
   currentState: CurrentState,
   data: LessonSchema
 ) => {
+  if (!data.id) {
+    return { success: false, error: true };
+  }
+
   try {
     await prisma.lesson.update({
       where: {
@@ -770,7 +889,7 @@ export const updateLesson = async (
       data: {
         name: data.name,
         day: data.day,
-        startTime:data.startTime,
+        startTime: data.startTime,
         endTime: data.endTime,
         subjectId: data.subjectId,
         classId: data.classId,
@@ -805,7 +924,6 @@ export const deleteLesson = async (
     return { success: false, error: true };
   }
 };
-
 
 //--------------------------PARENT ACTION----------------
  

@@ -231,15 +231,15 @@ async function main() {
   });
 
   // ------------------ ATTENDANCE
-  await prisma.attendance.createMany({
-    data: Array.from({ length: 50 }).map((_, i) => ({
-      date: new Date(),
-      present: Math.random() > 0.2,
-      studentId: `student${i+1}`,
-      lessonId: lessons[i % lessons.length].id,
-    })),
-    skipDuplicates: true,
-  });
+await prisma.attendance.createMany({
+  data: Array.from({ length: 50 }).map((_, i) => ({
+    date: new Date(),
+    present: Math.random() > 0.2,
+    studentId: students[i % students.length].id,
+    classId: students[i % students.length].classId,
+  })),
+  skipDuplicates: true,
+});
 
   console.log("Seeding finished.");
 }
