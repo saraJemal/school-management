@@ -726,12 +726,18 @@ export const saveMonthlyAttendance = async (
     attendance: {
       studentId: string;
       date: string;
-      present: boolean;
+      present: boolean | null;
     }[];
   }
 ) => {
   const { userId, sessionClaims } = auth();
   const role = (sessionClaims?.metadata as { role?: string })?.role;
+
+  console.log("SAVE MONTHLY ATTENDANCE RECEIVED:", {
+      classId: data.classId,
+      count: data.attendance.length,
+      firstRecords: data.attendance.slice(0, 10),
+    });
 
   try {
     // Teachers can only take attendance for their own home-room class
@@ -768,22 +774,36 @@ export const saveMonthlyAttendance = async (
       }
     }
 
-    // Create or update attendance records
+    console.log(
+      "CHECKING STUDENT1 AUGUST 3:",
+      data.attendance.filter(
+        (record) =>
+          record.studentId === "student1" &&
+          record.date === "2026-08-03"
+      )
+    );
 
     await prisma.$transaction(
       data.attendance.map((record) => {
-        // record.date is expected to be YYYY-MM-DD
-        const [year, month, day] = record.date
-          .split("-")
-          .map(Number);
+        // YYYY-MM-DD → local calendar date
+        // YYYY-MM-DD → exact UTC calendar date
+const attendanceDate = new Date(
+        `${record.date}T00:00:00.000Z`
+      );
 
-        // Create the date at midnight using the local calendar date.
-        const attendanceDate = new Date(
-          year,
-          month - 1,
-          day
-        );
+        // null means "Not recorded"
+        if (record.present === null) {
+          return prisma.attendance.deleteMany({
+            where: {
+              studentId: record.studentId,
+              classId: data.classId,
+              date: attendanceDate,
+            },
+          });
+        }
 
+        // true = Present
+        // false = Absent
         return prisma.attendance.upsert({
           where: {
             studentId_classId_date: {
@@ -805,9 +825,12 @@ export const saveMonthlyAttendance = async (
       })
     );
 
+    console.log("MONTHLY ATTENDANCE TRANSACTION COMPLETED");
+
     return { success: true, error: false };
   } catch (err) {
-    console.log(err);
+    console.error("SAVE MONTHLY ATTENDANCE ERROR:", err);
+
     return { success: false, error: true };
   }
 };

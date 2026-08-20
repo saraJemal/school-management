@@ -13,26 +13,27 @@ model Admin {
 }
 
 model Student {
-  id          String       @id
-  username    String       @unique
+  id          String              @id
+  username    String              @unique
   name        String
   surname     String
-  email       String?      @unique
-  phone       String?      @unique
+  email       String?             @unique
+  phone       String?             @unique
   address     String
   img         String?
   bloodType   String
   sex         UserSex
-  createdAt   DateTime     @default(now())
+  createdAt   DateTime            @default(now())
   parentId    String
   classId     Int
   gradeId     Int
   birthday    DateTime
   attendances Attendance[]
-  results     Result[]
-  class       Class        @relation(fields: [classId], references: [id])
-  grade       Grade        @relation(fields: [gradeId], references: [id])
-  parent      Parent       @relation(fields: [parentId], references: [id])
+  assessments StudentAssessment[]
+  enrollments StudentEnrollment[]
+  class       Class               @relation(fields: [classId], references: [id])
+  grade       Grade               @relation(fields: [gradeId], references: [id])
+  parent      Parent              @relation(fields: [parentId], references: [id])
 }
 
 model Teacher {
@@ -73,73 +74,103 @@ model Grade {
   students Student[]
 }
 
+model AcademicYear {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  startDate DateTime
+  endDate   DateTime
+  isCurrent Boolean  @default(false)
+
+  enrollments StudentEnrollment[]
+  assessments Assessment[]
+}
+
+model StudentEnrollment {
+  id             Int    @id @default(autoincrement())
+  studentId      String
+  academicYearId Int
+  classId        Int
+  rollNumber     Int
+
+  student      Student      @relation(fields: [studentId], references: [id])
+  academicYear AcademicYear @relation(fields: [academicYearId], references: [id])
+  class        Class        @relation(fields: [classId], references: [id])
+
+  @@unique([studentId, academicYearId])
+  @@unique([classId, academicYearId, rollNumber])
+}
+
 model Class {
-  id                Int            @id @default(autoincrement())
-  name              String         @unique
+  id                Int                 @id @default(autoincrement())
+  name              String              @unique
   capacity          Int
   homeRoomTeacherId String?
   gradeId           Int
   announcements     Announcement[]
-  grade             Grade          @relation(fields: [gradeId], references: [id])
-  homeRoomTeacher   Teacher?       @relation(fields: [homeRoomTeacherId], references: [id], map: "Class_supervisorId_fkey")
+  grade             Grade               @relation(fields: [gradeId], references: [id])
+  homeRoomTeacher   Teacher?            @relation(fields: [homeRoomTeacherId], references: [id], map: "Class_supervisorId_fkey")
   events            Event[]
   lessons           Lesson[]
   students          Student[]
+  enrollments       StudentEnrollment[]
   attendances       Attendance[]
+  assessments       Assessment[]
 }
 
 model Subject {
-  id       Int       @id @default(autoincrement())
-  name     String    @unique
-  lessons  Lesson[]
-  teachers Teacher[] @relation("SubjectToTeacher")
+  id          Int          @id @default(autoincrement())
+  name        String       @unique
+  lessons     Lesson[]
+  teachers    Teacher[]    @relation("SubjectToTeacher")
+  assessments Assessment[]
+}
+
+model Assessment {
+  id             Int                @id @default(autoincrement())
+  title          String
+  type           AssessmentType
+  category       AssessmentCategory
+  semester       Semester
+  academicYearId Int
+  classId        Int
+  subjectId      Int
+  maxScore       Float
+  weight         Float
+
+  academicYear AcademicYear @relation(fields: [academicYearId], references: [id])
+  class        Class        @relation(fields: [classId], references: [id])
+  subject      Subject      @relation(fields: [subjectId], references: [id])
+
+  results StudentAssessment[]
+
+  @@unique([academicYearId, classId, subjectId, semester, type])
+}
+
+model StudentAssessment {
+  id           Int    @id @default(autoincrement())
+  score        Float
+  assessmentId Int
+  studentId    String
+
+  assessment Assessment @relation(fields: [assessmentId], references: [id])
+  student    Student    @relation(fields: [studentId], references: [id])
+
+  @@unique([assessmentId, studentId])
 }
 
 model Lesson {
-  id          Int          @id @default(autoincrement())
-  name        String
-  day         Day
-  startTime   DateTime
-  endTime     DateTime
-  subjectId   Int
-  classId     Int
-  teacherId   String
-  assignments Assignment[]
-  exams       Exam[]
-  class       Class        @relation(fields: [classId], references: [id])
-  subject     Subject      @relation(fields: [subjectId], references: [id])
-  teacher     Teacher      @relation(fields: [teacherId], references: [id])
-}
-
-model Exam {
   id        Int      @id @default(autoincrement())
-  title     String
+  name      String
+  day       Day
   startTime DateTime
   endTime   DateTime
-  lessonId  Int
-  lesson    Lesson   @relation(fields: [lessonId], references: [id])
-  results   Result[]
-}
+  subjectId Int
+  classId   Int
+  teacherId String
 
-model Assignment {
-  id        Int      @id @default(autoincrement())
-  title     String
-  startDate DateTime
-  dueDate   DateTime
-  lessonId  Int
-  lesson    Lesson   @relation(fields: [lessonId], references: [id])
-  results   Result[]
-}
-
-model Result {
-  id           Int         @id @default(autoincrement())
-  score        Int
-  examId       Int?
-  assignmentId Int?
-  studentId    String
-  assignment   Assignment? @relation(fields: [assignmentId], references: [id])
-  exam         Exam?       @relation(fields: [examId], references: [id])
-  student      Student     @relation(fields: [studentId], references: [id])
+  class   Class   @relation(fields: [classId], references: [id])
+  subject Subject @relation(fields: [subjectId], references: [id])
+  teacher Teacher @relation(fields: [teacherId], references: [id])
 }
 
 model Attendance {
@@ -184,4 +215,31 @@ enum Day {
   WEDNESDAY
   THURSDAY
   FRIDAY
+}
+
+enum Semester {
+  SEMESTER1
+  SEMESTER2
+}
+
+enum AssessmentCategory {
+  CLASS_ACTIVITY
+  EXAM
+}
+
+enum AssessmentType {
+  CW1
+  CW2
+  HW1
+  HW2
+  WS1
+  WS2
+  PROJECT
+  EXERCISE_BOOK
+  Q1
+  Q2
+  TEST1
+  TEST2
+  MIDTERM
+  FINAL
 }
