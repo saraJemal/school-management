@@ -10,6 +10,7 @@ import { Dispatch, SetStateAction, useEffect } from "react";
 import { toast } from "react-toastify";
 import { useRouter } from "next/navigation";
 import { zodResolver } from "@hookform/resolvers/zod";
+import z from "zod";
 
 const ClassForm = ({
   type,
@@ -26,9 +27,13 @@ const ClassForm = ({
     register,
     formState: { errors },
     handleSubmit,
-  } = useForm<ClassSchema>({
-    resolver: zodResolver(classSchema),
-  });
+  } = useForm<
+        z.input<typeof classSchema>,
+        any,
+        z.output<typeof classSchema>
+      >({
+        resolver: zodResolver(classSchema),
+      })
 
   // AFTER REACT 19 IT'LL BE USEACTIONSTATE
   const [state, formAction] = useFormState(type === "create" ? createClass : updateClass,

@@ -120,6 +120,7 @@ const columns = [
     include:{
       subjects:true,
       classes:true,
+      sectionSupervisor: true,
     },
     take:ITEM_PER_PAGE,
     skip:ITEM_PER_PAGE*(p-1), 

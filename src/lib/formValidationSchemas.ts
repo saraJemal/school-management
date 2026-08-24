@@ -1,5 +1,11 @@
 import z from "zod";
-import { Day } from "@prisma/client";
+import {
+  Day,
+  AssessmentType,
+  AssessmentCategory,
+  Semester,
+  GradeSection,
+} from "@prisma/client";
 
 export const subjectSchema = z.object({
   id: z.coerce.number().optional(),
@@ -22,6 +28,95 @@ export const classSchema = z.object({
 
 export type ClassSchema = z.infer<typeof classSchema>; 
 
+// ---------------- ASSESSMENT SCHEMA ----------------
+
+export const assessmentSchema = z.object({
+  id: z.coerce.number().optional(),
+
+  title: z
+    .string()
+    .min(1, { message: "Assessment title is required!" }),
+
+  type: z.nativeEnum(AssessmentType, {
+    message: "Assessment type is required!",
+  }),
+
+  category: z.nativeEnum(AssessmentCategory, {
+    message: "Assessment category is required!",
+  }),
+
+  semester: z.nativeEnum(Semester, {
+    message: "Semester is required!",
+  }),
+
+  academicYearId: z.coerce
+    .number()
+    .min(1, { message: "Academic year is required!" }),
+
+  gradeId: z.coerce
+  .number()
+  .min(1, { message: "Grade is required!" }),
+
+  subjectId: z.coerce
+    .number()
+    .min(1, { message: "Subject is required!" }),
+
+  maxScore: z.coerce
+    .number()
+    .positive({ message: "Maximum score must be greater than 0!" }),
+
+  weight: z.coerce
+    .number()
+    .positive({ message: "Weight must be greater than 0!" }),
+});
+
+export type AssessmentSchema = z.infer<typeof assessmentSchema>;
+
+export const assessmentRowSchema = z.object({
+      academicYearId: z.coerce
+        .number()
+        .min(1, {
+          message: "Academic year is required!",
+        }),
+
+      gradeId: z.coerce
+        .number()
+        .min(1, {
+          message: "Grade is required!",
+        }),
+
+      subjectId: z.coerce
+        .number()
+        .min(1, {
+          message: "Subject is required!",
+        }),
+
+      semester: z.nativeEnum(Semester, {
+        message: "Semester is required!",
+      }),
+
+      assessments: z.record(
+      z.string(),
+      z.object({
+        maxScore: z.coerce
+          .number()
+          .positive({
+            message:
+              "Maximum score must be greater than 0!",
+          }),
+
+        weight: z.coerce
+          .number()
+          .positive({
+            message:
+              "Weight must be greater than 0!",
+          }),
+      })
+    ),
+});
+
+export type AssessmentRowSchema = z.infer<typeof assessmentRowSchema>;
+
 export const teacherSchema = z.object({
   id:z.string().optional(),
   username: z
@@ -42,6 +137,7 @@ export const teacherSchema = z.object({
   birthday: z.coerce.date({ message: "birth date is required!" }),
   sex: z.enum(["MALE", "FEMALE"], { message: "gender is required!" }),
   subjects: z.array(z.string()).optional(), // subject ids
+  supervisorSection: z.nativeEnum(GradeSection).optional(),
 });
 
 export type TeacherSchema = z.infer<typeof teacherSchema>; 
@@ -68,34 +164,11 @@ export const studentSchema = z.object({
   sex: z.enum(["MALE", "FEMALE"], { message: "gender is required!" }),
   gradeId: z.coerce.number().min(1, {message:"Grade is required!"}),
   classId: z.coerce.number().min(1, {message:"Class is required!"}),
-  parentId: z.string().min(1, {message:"Parent Id is required!"}),
+  parentId: z.string().optional(),
 });
 
 export type StudentSchema = z.infer<typeof studentSchema>; 
 
-export const examSchema = z.object({
-  id: z.coerce.number().optional(),
-  title: z
-  .string()
-  .min(1, { message: "Title name is required!" }),
-  startTime: z.coerce.date({message: "Start time is required"}),
-  endTime: z.coerce.date({message: "End time is required"}),
-  lessonId: z.coerce.number({message: "Lesson is required"}),
-});
-
-export type ExamSchema = z.infer<typeof examSchema>; 
-
-export const assignmentSchema = z.object({
-  id: z.coerce.number().optional(),
-  title: z
-  .string()
-  .min(1, { message: "Title name is required!" }),
-  startDate: z.coerce.date({message: "Start time is required"}),
-  dueDate: z.coerce.date({message: "End time is required"}),
-  lessonId: z.coerce.number({message: "Lesson is required"}),
-});
-
-export type AssignmentSchema = z.infer<typeof assignmentSchema>; 
 
 export const attendanceSchema = z.object({
   id: z.number().optional(),
@@ -173,7 +246,6 @@ export const parentSchema = z.object({
   surname: z.string().min(1, { message: "Last name is required!" }),
   phone: z.string(),
   address: z.string(),
-  students: z.string().min(1, "Please enter at least one student ID") // student ids
 });
 
 export type ParentSchema = z.infer<typeof parentSchema>; 

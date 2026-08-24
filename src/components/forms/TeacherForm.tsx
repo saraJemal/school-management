@@ -11,6 +11,7 @@ import { createTeacher, updateTeacher } from "@/lib/actions";
 import { useRouter } from "next/navigation";
 import { toast } from "react-toastify";
 import { CldUploadWidget } from 'next-cloudinary';
+import z from "zod";
 
 
 const TeacherForm = ({
@@ -30,13 +31,16 @@ const TeacherForm = ({
     setValue,
     watch,
     formState: { errors }, 
-  } = useForm<TeacherSchema>({
+  } = useForm<z.input<typeof teacherSchema>, any, z.output<typeof teacherSchema>>({
   resolver: zodResolver(teacherSchema),
   defaultValues: {
     img: data?.img || "",
   },
 });
 
+useEffect(() => {
+  console.log("FORM ERRORS:", errors);
+}, [errors]);
 //const [img, setImg] = useState<any>()
  //const [img, setImg] = useState<string | null>(data?.img || null);
 
@@ -49,9 +53,13 @@ const TeacherForm = ({
     });
 
   const onSubmit = handleSubmit((data) => {
-    console.log(data);
+    console.log("VALID DATA:", data);
     formAction(data)
-  })
+  },
+    (errors) => {
+      console.log("ZOD / FORM ERRORS:", errors);
+    }
+);
 
   const router = useRouter()
 
@@ -64,7 +72,7 @@ const TeacherForm = ({
 
   }, [state, router, type, setOpen]);
 
- const { subjects } = relatedData;
+ const { subjects, supervisorSections } = relatedData;
 
   return (
     <form className="flex flex-col gap-8" onSubmit={onSubmit}>
@@ -176,6 +184,34 @@ const TeacherForm = ({
       {errors.subjects?.message.toString()}
        </p>)}
       </div>
+        <div className="flex flex-col gap-2 w-full md:w-1/4">
+        <label className="text-xs text-gray-500">
+          Supervisor Section
+        </label>
+
+        <select
+          className="ring-[1.5px] ring-gray-300 p-2 rounded-md text-sm w-full"
+          {...register("supervisorSection")}
+          defaultValue={data?.sectionSupervisor?.section ?? ""}
+        >
+          <option value="">
+            Not a Supervisor
+          </option>
+
+          {supervisorSections.map((section: string) => (
+            <option value={section} key={section}>
+              {section}
+            </option>
+          ))}
+        </select>
+
+        {errors.supervisorSection?.message && (
+          <p className="text-xs text-red-500">
+            {errors.supervisorSection.message.toString()}
+          </p>
+        )}
+      </div>
+
       <CldUploadWidget uploadPreset="school" onSuccess={(result,{widget})=>{
       const url = (result.info as { secure_url: string }).secure_url;
 
@@ -203,8 +239,12 @@ const TeacherForm = ({
     </div>
 
     {state.error && (
-    <span className="text-red-500">Something went wrong!</span>
-      )}
+      <span className="text-red-500">
+        {state.error === "section-already-assigned"
+          ? "This section already has a supervisor!"
+          : "Something went wrong!"}
+      </span>
+    )}
 
     <button className="bg-badirBlue text-white p-2 rounded-md">{type ==="create" ? "Create" : "Update"}</button>
     </form>

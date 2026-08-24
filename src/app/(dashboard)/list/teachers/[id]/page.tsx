@@ -5,7 +5,6 @@ import { LocalDate } from "@/components/LocalDate";
 import Performance from "@/components/Performance";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@clerk/nextjs/server";
-import { Teacher } from "@prisma/client";
 import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -20,20 +19,17 @@ const SingleTeacherPage = async({
 const {sessionClaims} = auth();
 const role = (sessionClaims?.metadata as {role?:string})?.role;
 
-  const teacher: 
-  | (Teacher & {
-     _count:{subjects:number; lessons:number; classes:number};
-   }) 
-  | null = await prisma.teacher.findUnique({
-    where:{ id },
-    include:{
-      _count:{
-        select:{
-          subjects:true,
-          lessons:true,
-          classes:true,
+  const teacher = await prisma.teacher.findUnique({
+    where: { id },
+    include: {
+      _count: {
+        select: {
+          subjects: true,
+          lessons: true,
+          classes: true,
         },
       },
+      sectionSupervisor: true,
     },
   });
   if(!teacher){

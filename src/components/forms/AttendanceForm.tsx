@@ -4,8 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import InputField from "../InputField";
 import {
-  attendanceSchema,
-  AttendanceSchema,
+  attendanceSchema
 } from "@/lib/formValidationSchemas";
 import { createAttendance, updateAttendance } from "@/lib/actions";
 import { useFormState } from "react-dom";
@@ -16,6 +15,7 @@ import {
   } from "react";
 import { toast } from "react-toastify";
 import { useRouter } from "next/navigation";
+import z from "zod";
 
 const AttendanceForm = ({
   type,
@@ -34,9 +34,13 @@ const AttendanceForm = ({
     handleSubmit,
     watch,
     setValue,
-  } = useForm<AttendanceSchema>({
-    resolver: zodResolver(attendanceSchema),
-  });
+  } = useForm<
+        z.input<typeof attendanceSchema>,
+        any,
+        z.output<typeof attendanceSchema>
+      >({
+        resolver: zodResolver(attendanceSchema),
+      });
 
     const selectedClassId = watch("classId");
     const selectedStudentId = watch("studentId");

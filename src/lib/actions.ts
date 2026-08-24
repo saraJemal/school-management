@@ -1,12 +1,13 @@
 "use server"
 
 import { revalidatePath } from "next/cache";
-import { AssignmentSchema, AttendanceSchema, ClassSchema, ExamSchema, LessonSchema, ParentSchema, StudentSchema, SubjectSchema, TeacherSchema } from "./formValidationSchemas"
+import { AssessmentRowSchema, AssessmentSchema, AttendanceSchema, ClassSchema, LessonSchema, ParentSchema, StudentSchema, SubjectSchema, TeacherSchema } from "./formValidationSchemas"
 import { prisma } from "./prisma";
 import { auth, clerkClient } from "@clerk/nextjs/server";
 import { success } from "zod";
+import { AssessmentType, Semester } from "@prisma/client";
 
-type CurrentState = {success:boolean; error:boolean
+type CurrentState = {success:boolean; error:boolean |string
 };
 
 export const createSubject = async(
@@ -143,49 +144,514 @@ export const deleteClass = async(
     return{ success: false, error: true };
   }
 }
+  // ----------------------- ASSESSMENT ACTION -----------------------
+
+// Create
+export const createAssessment = async (
+  currentState: CurrentState,
+  data: AssessmentSchema
+) => {
+  try {
+    const { userId, sessionClaims } = auth();
+
+    const role = (sessionClaims?.metadata as {
+      role?: string;
+    })?.role;
+
+    if (!userId || !role) {
+      return { success: false, error: true };
+    }
+
+    // Only admin and teacher can create assessments.
+    if (role !== "admin" && role !== "teacher") {
+      return { success: false, error: true };
+    }
+
+    // Teachers can only create assessments
+    // for subjects assigned to them.
+    if (role === "teacher") {
+      const teacherSubject = await prisma.subject.findFirst({
+        where: {
+          id: data.subjectId,
+          teachers: {
+            some: {
+              id: userId,
+            },
+          },
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      if (!teacherSubject) {
+        return { success: false, error: true };
+      }
+    }
+
+    await prisma.assessment.create({
+      data,
+    });
+
+    return { success: true, error: false };
+  } catch (err) {
+    console.log(err);
+    return { success: false, error: true };
+  }
+};
+
+
+// Update
+export const updateAssessment = async (
+  currentState: CurrentState,
+  data: AssessmentSchema
+) => {
+  try {
+    const { userId, sessionClaims } = auth();
+
+    const role = (sessionClaims?.metadata as {
+      role?: string;
+    })?.role;
+
+    if (!userId || !role || !data.id) {
+      return { success: false, error: true };
+    }
+
+    // Only admin and teacher can update assessments.
+    if (role !== "admin" && role !== "teacher") {
+      return { success: false, error: true };
+    }
+
+    // Get the existing assessment so we can verify
+    // the teacher's permission against the original subject.
+    const existingAssessment =
+      await prisma.assessment.findUnique({
+        where: {
+          id: data.id,
+        },
+        select: {
+          subjectId: true,
+        },
+      });
+
+    if (!existingAssessment) {
+      return { success: false, error: true };
+    }
+
+    // Teachers can only update assessments
+    // belonging to their subjects.
+    if (role === "teacher") {
+      const originalSubject =
+        await prisma.subject.findFirst({
+          where: {
+            id: existingAssessment.subjectId,
+            teachers: {
+              some: {
+                id: userId,
+              },
+            },
+          },
+          select: {
+            id: true,
+          },
+        });
+
+      if (!originalSubject) {
+        return { success: false, error: true };
+      }
+
+      // Prevent a teacher from changing the assessment
+      // to another subject that they do not teach.
+      const newSubject =
+        await prisma.subject.findFirst({
+          where: {
+            id: data.subjectId,
+            teachers: {
+              some: {
+                id: userId,
+              },
+            },
+          },
+          select: {
+            id: true,
+          },
+        });
+
+      if (!newSubject) {
+        return { success: false, error: true };
+      }
+    }
+
+    await prisma.assessment.update({
+      where: {
+        id: data.id,
+      },
+      data,
+    });
+
+    return { success: true, error: false };
+  } catch (err) {
+    console.log(err);
+    return { success: false, error: true };
+  }
+};
+
+
+// Delete
+export const deleteAssessment = async (
+  currentState: CurrentState,
+  data: FormData
+) => {
+  const id = data.get("id") as string;
+
+  try {
+    const { userId, sessionClaims } = auth();
+
+    const role = (sessionClaims?.metadata as {
+      role?: string;
+    })?.role;
+
+    if (!userId || !role) {
+      return { success: false, error: true };
+    }
+
+    // Only admin and teacher can delete assessments.
+    if (role !== "admin" && role !== "teacher") {
+      return { success: false, error: true };
+    }
+
+    const assessment =
+      await prisma.assessment.findUnique({
+        where: {
+          id: parseInt(id),
+        },
+        select: {
+          subjectId: true,
+        },
+      });
+
+    if (!assessment) {
+      return { success: false, error: true };
+    }
+
+    // Teachers can only delete assessments
+    // belonging to their subjects.
+    if (role === "teacher") {
+      const teacherSubject =
+        await prisma.subject.findFirst({
+          where: {
+            id: assessment.subjectId,
+            teachers: {
+              some: {
+                id: userId,
+              },
+            },
+          },
+          select: {
+            id: true,
+          },
+        });
+
+      if (!teacherSubject) {
+        return { success: false, error: true };
+      }
+    }
+
+    await prisma.assessment.delete({
+      where: {
+        id: parseInt(id),
+      },
+    });
+
+    return { success: true, error: false };
+  } catch (err) {
+    console.log(err);
+    return { success: false, error: true };
+  }
+};
+
+export const updateAssessmentRow = async (
+  currentState: CurrentState,
+  data: AssessmentRowSchema
+) => {
+  try {
+    const { userId, sessionClaims } = auth();
+
+    const role = (sessionClaims?.metadata as {
+      role?: string;
+    })?.role;
+
+    if (!userId || !role) {
+      return {
+        success: false,
+        error: true,
+      };
+    }
+
+    // Only admin and teacher can update assessments.
+    if (role !== "admin" && role !== "teacher") {
+      return {
+        success: false,
+        error: true,
+      };
+    }
+
+    // Teacher can only update assessments
+    // belonging to a subject they teach.
+    if (role === "teacher") {
+      const teacherSubject =
+        await prisma.subject.findFirst({
+          where: {
+            id: data.subjectId,
+            teachers: {
+              some: {
+                id: userId,
+              },
+            },
+          },
+          select: {
+            id: true,
+          },
+        });
+
+      if (!teacherSubject) {
+        return {
+          success: false,
+          error: true,
+        };
+      }
+    }
+
+    /*
+     * Update every assessment in this
+     * subject/grade/semester combination.
+     */
+    for (const [
+      assessmentType,
+      assessmentData,
+    ] of Object.entries(data.assessments)) {
+      await prisma.assessment.updateMany({
+        where: {
+          academicYearId:
+            data.academicYearId,
+
+          gradeId: data.gradeId,
+
+          subjectId: data.subjectId,
+
+          semester: data.semester,
+
+          type: assessmentType as AssessmentType,
+        },
+
+        data: {
+          maxScore:
+            assessmentData.maxScore,
+
+          weight:
+            assessmentData.weight,
+        },
+      });
+    }
+
+    return {
+      success: true,
+      error: false,
+    };
+  } catch (err) {
+    console.log(err);
+
+    return {
+      success: false,
+      error: true,
+    };
+  }
+};
+
+export const deleteAssessmentRow = async (
+  currentState: CurrentState,
+  data: FormData
+) => {
+  try {
+    const { userId, sessionClaims } = auth();
+
+    const role = (sessionClaims?.metadata as {
+      role?: string;
+    })?.role;
+
+    if (!userId || !role) {
+      return {
+        success: false,
+        error: true,
+      };
+    }
+
+    // Only admin and teacher can delete assessments.
+    if (role !== "admin" && role !== "teacher") {
+      return {
+        success: false,
+        error: true,
+      };
+    }
+
+    const academicYearId = Number(
+      data.get("academicYearId")
+    );
+
+    const gradeId = Number(
+      data.get("gradeId")
+    );
+
+    const subjectId = Number(
+      data.get("subjectId")
+    );
+
+    const semester = data.get("semester") as Semester;
+
+    if (
+      !academicYearId ||
+      !gradeId ||
+      !subjectId ||
+      !semester
+    ) {
+      return {
+        success: false,
+        error: true,
+      };
+    }
+
+    // Teachers can only delete assessments
+    // belonging to subjects they teach.
+    if (role === "teacher") {
+      const teacherSubject =
+        await prisma.subject.findFirst({
+          where: {
+            id: subjectId,
+            teachers: {
+              some: {
+                id: userId,
+              },
+            },
+          },
+          select: {
+            id: true,
+          },
+        });
+
+      if (!teacherSubject) {
+        return {
+          success: false,
+          error: true,
+        };
+      }
+    }
+
+    await prisma.assessment.deleteMany({
+      where: {
+        academicYearId,
+        gradeId,
+        subjectId,
+        semester,
+      },
+    });
+
+    return {
+      success: true,
+      error: false,
+    };
+  } catch (err) {
+    console.log(err);
+
+    return {
+      success: false,
+      error: true,
+    };
+  }
+};
 
 //-----------------------TEACHER ACTION-------------------
 
 // Create
-export const createTeacher = async(
+export const createTeacher = async (
   currentState: CurrentState,
-  data:TeacherSchema
-)=>{
-  try{
+  data: TeacherSchema
+) => {
+  try {
+    // Check whether this section already has a supervisor
+    if (data.supervisorSection) {
+      const existingSupervisor =
+        await prisma.sectionSupervisor.findUnique({
+          where: {
+            section: data.supervisorSection,
+          },
+        });
+
+      if (existingSupervisor) {
+        return {
+          success: false,
+          error: "section-already-assigned",
+        };
+      }
+    }
+
     const user = await clerkClient.users.createUser({
-      username:data.username,
-      password:data.password,
-      firstName:data.name,
-      lastName:data.surname,
+      username: data.username,
+      password: data.password,
+      firstName: data.name,
+      lastName: data.surname,
     });
+
     await prisma.teacher.create({
-      data:{
-      id: user.id,
-      username:data.username,
-      name:data.name,
-      surname: data.surname,
-      email:data.email || null,
-      phone:data.phone || null,
-      address:data.address,
-      img:data.img || null,
-      bloodType:data.bloodType,
-      sex:data.sex,
-      birthday:data.birthday,
-      subjects:{
-        connect:data.subjects?.map((subjectId:string)=>({
-          id:parseInt(subjectId),
-        })),
-      },
+      data: {
+        id: user.id,
+        username: data.username,
+        name: data.name,
+        surname: data.surname,
+        email: data.email || null,
+        phone: data.phone || null,
+        address: data.address,
+        img: data.img || null,
+        bloodType: data.bloodType,
+        sex: data.sex,
+        birthday: data.birthday,
+
+        subjects: {
+          connect: data.subjects?.map(
+            (subjectId: string) => ({
+              id: parseInt(subjectId),
+            })
+          ),
+        },
+
+        ...(data.supervisorSection
+          ? {
+              sectionSupervisor: {
+                create: {
+                  section: data.supervisorSection,
+                },
+              },
+            }
+          : {}),
       },
     });
 
     //revalidatePath("/list/teacher")
-    return{ success: true, error: false };
-  }catch(err){
+
+    return {
+      success: true,
+      error: false,
+    };
+  } catch (err) {
     console.log(err);
-    return{ success: false, error: true };
+
+    return {
+      success: false,
+      error: true,
+    };
   }
 };
+
+
  //Update 
 
 export const updateTeacher = async(
@@ -203,30 +669,70 @@ export const updateTeacher = async(
       firstName:data.name,
       lastName:data.surname,
     });
+
+    if (data.supervisorSection) {
+      const existingSupervisor =
+        await prisma.sectionSupervisor.findUnique({
+          where: {
+            section: data.supervisorSection,
+          },
+        });
+
+      if (
+        existingSupervisor &&
+        existingSupervisor.teacherId !== data.id
+      ) {
+        return {
+          success: false,
+          error: true,
+        };
+      }
+    }
+
     await prisma.teacher.update({
-      where:{
-        id:data.id,
+      where: {
+        id: data.id,
       },
-      data:{
-        ...(data.password !=="" && {password:data.password}),
-      username:data.username,
-      name:data.name,
-      surname: data.surname,
-      email:data.email || null,
-      phone:data.phone || null,
-      address:data.address,
-      img:data.img || null,
-      bloodType:data.bloodType,
-      sex:data.sex,
-      birthday:data.birthday,
-      subjects:{
-        set:data.subjects?.map((subjectId:string)=>({
-          id:parseInt(subjectId),
-        })),
-      },
+      data: {
+        ...(data.password !== "" && {
+          password: data.password,
+        }),
+
+        username: data.username,
+        name: data.name,
+        surname: data.surname,
+        email: data.email || null,
+        phone: data.phone || null,
+        address: data.address,
+        img: data.img || null,
+        bloodType: data.bloodType,
+        sex: data.sex,
+        birthday: data.birthday,
+
+        subjects: {
+          set: data.subjects?.map(
+            (subjectId: string) => ({
+              id: parseInt(subjectId),
+            })
+          ),
+        },
       },
     });
 
+    await prisma.sectionSupervisor.deleteMany({
+      where: {
+        teacherId: data.id,
+      },
+    });
+
+    if (data.supervisorSection) {
+      await prisma.sectionSupervisor.create({
+        data: {
+          section: data.supervisorSection,
+          teacherId: data.id,
+        },
+      });
+    }
 
     //revalidatePath("/list/teacher")
     return{ success: true, error: false };
@@ -302,7 +808,7 @@ export const createStudent = async(
       birthday:data.birthday,
       gradeId: data.gradeId,
       classId: data.classId,
-      parentId: data.parentId,
+       ...(data.parentId ? { parentId: data.parentId } : {}),
       },
     });
 
@@ -385,226 +891,6 @@ export const deleteStudent = async(
     return{ success: false, error: true };
   }
 };
-
-//---------------------EXAM ACTION-------------------
-
-//CREATE
- export const createExam = async(
-  currentState: CurrentState,
-  data:ExamSchema
-)=>{
-
-  const {userId, sessionClaims} = auth();
-  const role = (sessionClaims?.metadata as {role?:string })?.role;
-
-  try{
-    if(role==="teacher"){
-    const teacherLesson = await prisma.lesson.findFirst({
-      where:{
-        teacherId: userId!,
-        id: data.lessonId,
-      },
-    });
-
-    if(!teacherLesson){
-      return {success: false, error: true};
-    }
-  }
-    await prisma.exam.create({
-      data:{
-        title: data.title,
-        startTime: data.startTime,
-        endTime: data.endTime,
-        lessonId: data.lessonId,
-      },
-    });
-
-    //revalidatePath("/list/exams")
-    return{ success: true, error: false };
-  }catch(err){
-    console.log(err);
-    return{ success: false, error: true };
-  }
-}
- //Update 
-
-export const updateExam = async(
-  currentState: CurrentState,
-  data:ExamSchema
-)=>{
-
-  const {userId, sessionClaims} = auth();
-  const role = (sessionClaims?.metadata as {role?:string })?.role;
-  try{
-    if(role==="teacher"){
-    const teacherLesson = await prisma.lesson.findFirst({
-      where:{
-        teacherId: userId!,
-        id: data.lessonId,
-      },
-    });
-  
-    if(!teacherLesson){
-      return {success: false, error: true};
-    }
-  }
-    await prisma.exam.update({
-      where:{
-        id: data.id,
-      },
-      data:{
-        title: data.title,
-        startTime: data.startTime,
-        endTime: data.endTime,
-        lessonId: data.lessonId,
-      },
-    });
-  
-    //revalidatePath("/list/exams")
-    return{ success: true, error: false };
-  }catch(err){
-    console.log(err);
-    return{ success: false, error: true };
-  }
-}
-
-//Delete 
-
-export const deleteExam = async(
-  currentState: CurrentState,
-  data:FormData
-)=>{
-
-  const id = data.get("id") as string 
-
-  const {userId, sessionClaims} = auth();
-  const role = (sessionClaims?.metadata as {role?:string })?.role;
-
-  try{
-    await prisma.exam.delete({
-      where:{
-        id: parseInt(id),
-        ...(role === "teacher" ? { lesson:{teacherId: userId!} } : {}),
-      },
-    });
-
-    //revalidatePath("/list/subjects")
-    return{ success: true, error: false };
-  }catch(err){
-    console.log(err);
-    return{ success: false, error: true };
-  }
-}; 
-
-//ASSIGNMENT ACTION
-
-           //CREATE
- export const createAssignment = async(
-  currentState: CurrentState,
-  data:AssignmentSchema,
-)=>{
-
-  const {userId, sessionClaims} = auth();
-  const role = (sessionClaims?.metadata as {role?:string })?.role;
-
-  try{
-    if(role==="teacher"){
-    const teacherLesson = await prisma.lesson.findFirst({
-      where:{
-        teacherId: userId!,
-        id: data.lessonId,
-      },
-    });
-
-    if(!teacherLesson){
-      return {success: false, error: true};
-    }
-  }
-    await prisma.assignment.create({
-      data:{
-        title: data.title,
-        startDate: data.startDate,
-        dueDate: data.dueDate,
-        lessonId: data.lessonId,
-      },
-    });
-
-    //revalidatePath("/list/exams")
-    return{ success: true, error: false };
-  }catch(err){
-    console.log(err);
-    return{ success: false, error: true };
-  }
-}
- //Update 
-
-export const updateAssignment = async(
-  currentState: CurrentState,
-  data:AssignmentSchema,
-)=>{
-
-  const {userId, sessionClaims} = auth();
-  const role = (sessionClaims?.metadata as {role?:string })?.role;
-  try{
-    if(role==="teacher"){
-    const teacherLesson = await prisma.lesson.findFirst({
-      where:{
-        teacherId: userId!,
-        id: data.lessonId,
-      },
-    });
-  
-    if(!teacherLesson){
-      return {success: false, error: true};
-    }
-  }
-    await prisma.assignment.update({
-      where:{
-        id: data.id,
-      },
-      data:{
-        title: data.title,
-        startDate: data.startDate,
-        dueDate: data.dueDate,
-        lessonId: data.lessonId,
-      },
-    });
-  
-    //revalidatePath("/list/exams")
-    return{ success: true, error: false };
-  }catch(err){
-    console.log(err);
-    return{ success: false, error: true };
-  }
-}
-
-//Delete 
-
-export const deleteAssignment = async(
-  currentState: CurrentState,
-  data:FormData
-)=>{
-
-  const id = data.get("id") as string 
-
-  const {userId, sessionClaims} = auth();
-  const role = (sessionClaims?.metadata as {role?:string })?.role;
-
-  try{
-    await prisma.assignment.delete({
-      where:{
-        id: parseInt(id),
-        ...(role === "teacher" ? { lesson:{teacherId: userId!} } : {}),
-      },
-    });
-
-    //revalidatePath("/list/subjects")
-    return{ success: true, error: false };
-  }catch(err){
-    console.log(err);
-    return{ success: false, error: true };
-  }
-};          
 
 
 //--------------------------Attendance Action--------
@@ -785,11 +1071,10 @@ export const saveMonthlyAttendance = async (
 
     await prisma.$transaction(
       data.attendance.map((record) => {
-        // YYYY-MM-DD → local calendar date
-        // YYYY-MM-DD → exact UTC calendar date
-const attendanceDate = new Date(
-        `${record.date}T00:00:00.000Z`
-      );
+        // YYYY-MM-DD → UTC date
+      const attendanceDate = new Date(
+          `${record.date}T00:00:00.000Z`
+        );
 
         // null means "Not recorded"
         if (record.present === null) {
@@ -971,15 +1256,6 @@ export const createParent = async(
       email:data.email || null,
       phone:data.phone,
       address:data.address,
-      students: {
-          connect: data.students
-            .split(",")
-            .map((studentId: string) => studentId.trim())
-            .filter(Boolean)
-            .map((studentId: string) => ({
-              id: studentId,
-            })),
-        },
       },
     });
 
@@ -1019,15 +1295,6 @@ export const updateParent = async(
       email:data.email || null,
       phone:data.phone,
       address:data.address,
-      students: {
-            set: data.students
-              .split(",")
-              .map((studentId: string) => studentId.trim())
-              .filter(Boolean)
-              .map((studentId: string) => ({
-                id: studentId,
-              })),
-          },
       },
     });
 

@@ -1,5 +1,5 @@
 "use client"
-import { deleteAssignment, deleteAttendance, deleteClass, deleteExam, deleteLesson, deleteParent, deleteStudent, deleteSubject, deleteTeacher } from "@/lib/actions";
+import { deleteAssessment, deleteAttendance, deleteClass, deleteLesson, deleteParent, deleteStudent, deleteSubject, deleteTeacher, deleteAssessmentRow} from "@/lib/actions";
 import dynamic from "next/dynamic";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
@@ -18,9 +18,8 @@ const deleteActionMap = {
   student: deleteStudent,
   parent: deleteParent,
   lesson: deleteLesson,
-  exam: deleteExam,
-  assignment: deleteAssignment,
-  result: deleteSubject,
+  assessment: deleteAssessment,
+  assessmentRow: deleteAssessmentRow,
   attendance: deleteAttendance,
   event: deleteSubject,
   announcement: deleteSubject,
@@ -41,12 +40,6 @@ const SubjectForm = dynamic(()=>import("./forms/SubjectForm"),{
 const ClassForm = dynamic(()=>import("./forms/ClassForm"),{
   loading:()=><h1>Loading...</h1>,
 });
-const ExamForm = dynamic(()=>import("./forms/ExamForm"),{
-  loading:()=><h1>Loading...</h1>,
-});
-const AssignmentForm = dynamic(()=>import("./forms/AssignmentForm"),{
-  loading:()=><h1>Loading...</h1>,
-});
 const AttendanceForm = dynamic(() => import("./forms/AttendanceForm"), {
   loading: () => <h1>Loading...</h1>,
 });
@@ -56,6 +49,14 @@ const LessonForm = dynamic(() => import("./forms/LessonForm"), {
 const ParentForm = dynamic(() => import("./forms/ParentForm"), {
   loading: () => <h1>Loading...</h1>,
 });
+const AssessmentForm = dynamic(() => import("./forms/AssessmentForm"), {
+  loading: () => <h1>Loading...</h1>,
+});
+const AssessmentRowForm = dynamic(() =>
+  import("./forms/AssessmentRowForm"), {
+    loading: () => <h1>Loading...</h1>,
+  }
+);
 const forms:{
   [key:string]:(setOpen:Dispatch<SetStateAction<boolean>>,type:"create"|"update", data?:any, relatedData?:any)=> JSX.Element;
 }={
@@ -91,22 +92,6 @@ const forms:{
     relatedData = {relatedData}
     />
   ),
-  exam:( setOpen, type, data, relatedData )=>(
-    <ExamForm 
-    type={type} 
-    data={data} 
-    setOpen = {setOpen} 
-    relatedData = {relatedData}
-    />
-  ),
-  assignment:( setOpen, type, data, relatedData )=>(
-    <AssignmentForm 
-    type={type} 
-    data={data} 
-    setOpen = {setOpen} 
-    relatedData = {relatedData}
-    />
-  ),
   attendance: (setOpen, type, data, relatedData) => (
     <AttendanceForm
       type={type}
@@ -131,6 +116,22 @@ const forms:{
       relatedData={relatedData}
     />
   ),
+  assessment: (setOpen, type, data, relatedData) => (
+    <AssessmentForm
+      type={type}
+      data={data}
+      setOpen={setOpen}
+      relatedData={relatedData}
+    />
+  ),
+  assessmentRow: (setOpen, type, data, relatedData) => (
+  <AssessmentRowForm
+    type={type}
+    data={data}
+    setOpen={setOpen}
+    relatedData={relatedData}
+  />
+),
 
 }; 
 const FormModal = ({

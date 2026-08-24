@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import FormModal from "./FormModal";
 import { auth } from "@clerk/nextjs/server";
+import { GradeSection } from "@prisma/client";
 
 export type FormContainerProps = {
    table:
@@ -10,9 +11,8 @@ export type FormContainerProps = {
     | "subject"
     | "class"
     | "lesson"
-    | "exam"
-    | "assignment"
-    | "result"
+    | "assessment"
+    | "assessmentRow"
     | "attendance"
     | "event"
     | "announcement";
@@ -47,38 +47,69 @@ if(type !=="delete"){
       relatedData = {teachers: classTeachers, grades: classGrades };
       break;
     case "teacher":
-      const teacherSubjects= await prisma.subject.findMany({
-        select:{ id:true, name:true }, 
+      const teacherSubjects = await prisma.subject.findMany({
+        select: {
+          id: true,
+          name: true,
+        },
       });
-      relatedData = {subjects: teacherSubjects };
+
+      const supervisorSections = Object.values(GradeSection);
+
+      relatedData = {
+        subjects: teacherSubjects,
+        supervisorSections,
+      };
+
       break;
     case "student":
-      const studentGrades= await prisma.grade.findMany({
-        select:{ id:true, level:true }, 
-      });
-      const studentClasses= await prisma.class.findMany({
-        include: { _count:{ select:{ students:true } } }, 
-      });
-      relatedData = {classes: studentClasses, grades: studentGrades };
-      break;
-    case "exam":
-      const examLessons= await prisma.lesson.findMany({
-        where:{
-          ...(role === "teacher" ? {teacherId:userId!} : {})
+      const studentGrades = await prisma.grade.findMany({
+        select: {
+          id: true,
+          level: true,
         },
-         select: { id: true, name: true },
-      });
-      relatedData = {lessons: examLessons };
-      break;
-    case "assignment":
-      const assignmentLessons= await prisma.lesson.findMany({
-        where:{
-          ...(role === "teacher" ? {teacherId:userId!} : {})
+        orderBy: {
+          level: "asc",
         },
-         select: { id: true, name: true },
       });
-      relatedData = {lessons: assignmentLessons };
+
+      const studentClasses = await prisma.class.findMany({
+        select: {
+          id: true,
+          name: true,
+          capacity: true,
+          _count: {
+            select: {
+              students: true,
+            },
+          },
+        },
+        orderBy: {
+          name: "asc",
+        },
+      });
+
+      const studentParents = await prisma.parent.findMany({
+        select: {
+          id: true,
+          name: true,
+          surname: true,
+          phone: true,
+        },
+        orderBy: {
+          name: "asc",
+        },
+        take: 100,
+      });
+
+      relatedData = {
+        classes: studentClasses,
+        grades: studentGrades,
+        parents: studentParents,
+      };
+
       break;
+
 
     // case "attendance":
     //   const attendanceStudents = await prisma.student.findMany({
@@ -145,12 +176,61 @@ if(type !=="delete"){
       relatedData = { teachers, subjects, classes };
       break;
   case "parent":
-      const parentStudents= await prisma.student.findMany({
-        select:{ id:true, name:true }, 
-      });
-      relatedData = {students: parentStudents };
-      break; 
-   
+      relatedData = {};
+      break;
+   case "assessment":
+      const assessmentAcademicYears =
+        await prisma.academicYear.findMany({
+          select: {
+            id: true,
+            name: true,
+          },
+          orderBy: {
+            startDate: "desc",
+          },
+        });
+
+      const assessmentGrades =
+        await prisma.grade.findMany({
+          select: {
+            id: true,
+            level: true,
+            name: true,
+          },
+          orderBy: {
+            level: "asc",
+          },
+        });
+
+      const assessmentSubjects =
+        await prisma.subject.findMany({
+          where:
+            role === "teacher"
+              ? {
+                  teachers: {
+                    some: {
+                      id: currentUserId!,
+                    },
+                  },
+                }
+              : undefined,
+          select: {
+            id: true,
+            name: true,
+          },
+          orderBy: {
+            id: "asc",
+          },
+        });
+
+      relatedData = {
+        academicYears: assessmentAcademicYears,
+        grades: assessmentGrades,
+        subjects: assessmentSubjects,
+      };
+
+      break;
+
     default:
       break;
   }

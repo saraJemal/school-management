@@ -11,6 +11,7 @@ import { createStudent, updateStudent } from "@/lib/actions";
 import { useRouter } from "next/navigation";
 import { toast } from "react-toastify";
 import { CldUploadWidget } from 'next-cloudinary';
+import z from "zod";
 
 
 const StudentForm = ({
@@ -30,15 +31,64 @@ const StudentForm = ({
     setValue,
     watch,
     formState: { errors }, 
-  } = useForm<StudentSchema>({
-  resolver: zodResolver(studentSchema),
-  defaultValues: {
-    img: data?.img || "",
-  },
-});
+  } = useForm<
+        z.input<typeof studentSchema>,
+        any,
+        z.output<typeof studentSchema>
+      >({
+        resolver: zodResolver(studentSchema),
+        defaultValues: {
+          img: data?.img || "",
+          parentId: data?.parentId || "",
+        },
+      });
 
  //const [img, setImg] = useState<any>()
  const img = watch("img");
+
+  const [parentSearch, setParentSearch] = useState(
+  data?.parent
+    ? `${data.parent.name} ${data.parent.surname}`
+    : ""
+);
+  const [parentResults, setParentResults] = useState<any[]>([]);
+  const [parentLoading, setParentLoading] = useState(false);
+  const [showParentResults, setShowParentResults] = useState(false);
+
+  useEffect(() => {
+  const searchParents = async () => {
+    if (parentSearch.trim().length < 2) {
+      setParentResults([]);
+      return;
+    }
+
+    setParentLoading(true);
+
+    try {
+      const response = await fetch(
+        `/api/parents/search?search=${encodeURIComponent(
+          parentSearch.trim()
+        )}`
+      );
+
+      if (!response.ok) {
+        throw new Error("Failed to search parents");
+      }
+
+      const parents = await response.json();
+      setParentResults(parents);
+    } catch (error) {
+      console.error(error);
+      setParentResults([]);
+    } finally {
+      setParentLoading(false);
+    }
+  };
+
+  const timer = setTimeout(searchParents, 300);
+
+  return () => clearTimeout(timer);
+}, [parentSearch]);
 
   const [state, formAction] = useFormState(type === "create" ? createStudent : updateStudent,
     {
@@ -162,13 +212,79 @@ const StudentForm = ({
           error={errors?.birthday}
           type="date"
         />
-        <InputField
-          label="Parent Id"
-          name="parentId"
-          defaultValue={data?.parentId}
-          register={register}
-          error={errors?.parentId}
+        <div className="flex flex-col gap-2 w-full md:w-1/4 relative">
+        <label className="text-xs text-gray-500">
+          Parent
+        </label>
+
+        <input
+          type="text"
+          value={parentSearch}
+          onChange={(e) => {
+            setParentSearch(e.target.value);
+            setShowParentResults(true);
+          }}
+          onFocus={() => setShowParentResults(true)}
+          placeholder="Search parent..."
+          className="ring-[1.5px] ring-gray-300 p-2 rounded-md text-sm w-full"
         />
+
+        <input
+          type="hidden"
+          {...register("parentId")}
+        />
+
+        {parentLoading && (
+          <span className="text-xs text-gray-400">
+            Searching...
+          </span>
+        )}
+
+        {showParentResults && parentResults.length > 0 && (
+          <div className="absolute top-full left-0 right-0 z-50 bg-white border border-gray-200 rounded-md shadow-md max-h-60 overflow-y-auto">
+            {parentResults.map((parent) => (
+              <button
+                type="button"
+                key={parent.id}
+                className="w-full text-left p-2 hover:bg-gray-100 text-sm"
+                onClick={() => {
+                  setValue("parentId", parent.id);
+                  setParentSearch(
+                    `${parent.name} ${parent.surname}`
+                  );
+                  setShowParentResults(false);
+                  setParentResults([]);
+                }}
+              >
+                <div className="font-medium">
+                  {parent.name} {parent.surname}
+                </div>
+
+                {parent.phone && (
+                  <div className="text-xs text-gray-500">
+                    {parent.phone}
+                  </div>
+                )}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {showParentResults &&
+          !parentLoading &&
+          parentSearch.trim().length >= 2 &&
+          parentResults.length === 0 && (
+            <span className="text-xs text-gray-400">
+              No parents found.
+            </span>
+          )}
+
+        {errors.parentId?.message && (
+          <p className="text-xs text-red-500">
+            {errors.parentId.message.toString()}
+          </p>
+        )}
+      </div>
         {data && (
           <InputField
             label="Id"

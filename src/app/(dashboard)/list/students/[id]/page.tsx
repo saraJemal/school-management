@@ -23,14 +23,38 @@ const SingleStudentPage = async({
 const {sessionClaims} = auth();
 const role = (sessionClaims?.metadata as {role?:string})?.role;
 
-  const student: 
+  const student:
   | (Student & {
-     class:(Class & { _count: { lessons:number } } );
-   }) 
+      class: Class & {
+        _count: {
+          lessons: number;
+        };
+      };
+      parent: {
+        id: string;
+        name: string;
+        surname: string;
+        phone: string;
+      } | null;
+    })
   | null = await prisma.student.findUnique({
     where:{ id },
-    include:{
-        class:{ include: { _count: {select: { lessons: true } } } },
+    include: {
+      class: {
+        include: {
+          _count: {
+            select: { lessons: true },
+          },
+        },
+      },
+      parent: {
+        select: {
+          id: true,
+          name: true,
+          surname: true,
+          phone: true,
+        },
+      },
     },
   });
   if(!student){

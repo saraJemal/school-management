@@ -8,8 +8,9 @@ datasource db {
 }
 
 model Admin {
-  id       String @id
-  username String @unique
+  id        String   @id
+  username  String   @unique
+  createdAt DateTime @default(now())
 }
 
 model Student {
@@ -24,7 +25,7 @@ model Student {
   bloodType   String
   sex         UserSex
   createdAt   DateTime            @default(now())
-  parentId    String
+  parentId    String?
   classId     Int
   gradeId     Int
   birthday    DateTime
@@ -33,7 +34,7 @@ model Student {
   enrollments StudentEnrollment[]
   class       Class               @relation(fields: [classId], references: [id])
   grade       Grade               @relation(fields: [gradeId], references: [id])
-  parent      Parent              @relation(fields: [parentId], references: [id])
+  parent      Parent?             @relation(fields: [parentId], references: [id], onDelete: SetNull)
 }
 
 model Teacher {
@@ -48,6 +49,7 @@ model Teacher {
   bloodType String
   sex       UserSex
   createdAt DateTime  @default(now())
+  sectionSupervisor SectionSupervisor?
   birthday  DateTime
   classes   Class[]
   lessons   Lesson[]
@@ -67,11 +69,13 @@ model Parent {
 }
 
 model Grade {
-  id       Int       @id @default(autoincrement())
-  level    Int       @unique
-  name     String    @unique
-  classess Class[]
-  students Student[]
+  id          Int          @id @default(autoincrement())
+  level       Int          @unique
+  name        String       @unique
+  section     GradeSection
+  classes     Class[]
+  students    Student[]
+  assessments Assessment[]
 }
 
 model AcademicYear {
@@ -83,6 +87,7 @@ model AcademicYear {
 
   enrollments StudentEnrollment[]
   assessments Assessment[]
+  resultSubmissions ResultSubmission[]
 }
 
 model StudentEnrollment {
@@ -114,15 +119,27 @@ model Class {
   students          Student[]
   enrollments       StudentEnrollment[]
   attendances       Attendance[]
-  assessments       Assessment[]
+  resultSubmissions ResultSubmission[]
 }
 
 model Subject {
-  id          Int          @id @default(autoincrement())
-  name        String       @unique
+  id          Int              @id @default(autoincrement())
+  name        String           @unique
   lessons     Lesson[]
-  teachers    Teacher[]    @relation("SubjectToTeacher")
+  teachers    Teacher[]        @relation("SubjectToTeacher")
   assessments Assessment[]
+  sections    SubjectSection[] @relation("SubjectToSection")
+  resultSubmissions ResultSubmission[]
+}
+
+model SubjectSection {
+  id        Int          @id @default(autoincrement())
+  subjectId Int
+  section   GradeSection
+
+  subject Subject @relation("SubjectToSection", fields: [subjectId], references: [id])
+
+  @@unique([subjectId, section])
 }
 
 model Assessment {
@@ -132,18 +149,19 @@ model Assessment {
   category       AssessmentCategory
   semester       Semester
   academicYearId Int
-  classId        Int
+  gradeId        Int
   subjectId      Int
   maxScore       Float
   weight         Float
 
   academicYear AcademicYear @relation(fields: [academicYearId], references: [id])
-  class        Class        @relation(fields: [classId], references: [id])
+  grade        Grade        @relation(fields: [gradeId], references: [id])
   subject      Subject      @relation(fields: [subjectId], references: [id])
 
   results StudentAssessment[]
+  
 
-  @@unique([academicYearId, classId, subjectId, semester, type])
+  @@unique([academicYearId, gradeId, subjectId, semester, type])
 }
 
 model StudentAssessment {
@@ -156,6 +174,33 @@ model StudentAssessment {
   student    Student    @relation(fields: [studentId], references: [id])
 
   @@unique([assessmentId, studentId])
+}
+
+model ResultSubmission {
+  id             Int                    @id @default(autoincrement())
+  academicYearId Int
+  classId        Int
+  subjectId      Int
+  semester       Semester
+  status         ResultSubmissionStatus @default(DRAFT)
+  submittedAt    DateTime?
+  submittedById  String?
+  resetAt        DateTime?
+  resetById      String?
+
+  academicYear AcademicYear @relation(fields: [academicYearId], references: [id])
+  class        Class        @relation(fields: [classId], references: [id])
+  subject      Subject      @relation(fields: [subjectId], references: [id])
+
+  @@unique([academicYearId, classId, subjectId, semester])
+}
+
+model SectionSupervisor {
+  id        Int          @id @default(autoincrement())
+  section   GradeSection @unique
+  teacherId String       @unique
+
+  teacher Teacher @relation(fields: [teacherId], references: [id])
 }
 
 model Lesson {
@@ -242,4 +287,17 @@ enum AssessmentType {
   TEST2
   MIDTERM
   FINAL
+}
+
+enum GradeSection {
+  KG
+  PRIMARY
+  MIDDLE
+  SECONDARY
+  PREPARATORY
+}
+
+enum ResultSubmissionStatus {
+  DRAFT
+  SUBMITTED
 }

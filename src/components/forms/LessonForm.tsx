@@ -10,6 +10,7 @@ import { toast } from "react-toastify";
 import { useRouter } from "next/navigation";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Day } from "@prisma/client";
+import z from "zod";
 
 
 type LessonFormValues = {
@@ -38,9 +39,13 @@ const LessonForm = ({
     register,
     handleSubmit,
     formState: { errors },
-  } = useForm<LessonFormValues>({
-    resolver: zodResolver(lessonSchema),
-  });
+  } = useForm<
+        z.input<typeof lessonSchema>,
+        any,
+        z.output<typeof lessonSchema>
+      >({
+        resolver: zodResolver(lessonSchema),
+      })
 
   const [state, formAction] = useFormState(
     type === "create" ? createLesson : updateLesson,

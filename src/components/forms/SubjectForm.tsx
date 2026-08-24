@@ -9,6 +9,7 @@ import { useFormState } from "react-dom";
 import { Dispatch, SetStateAction, useEffect } from "react";
 import { toast } from "react-toastify";
 import { useRouter } from "next/navigation";
+import z from "zod";
 
 
 const SubjectForm = ({
@@ -26,9 +27,13 @@ const SubjectForm = ({
     register,
     formState: { errors },
     handleSubmit
-  } = useForm<SubjectSchema>({
-    resolver: zodResolver(subjectSchema),
-  });
+  } = useForm<
+        z.input<typeof subjectSchema>,
+        any,
+        z.output<typeof subjectSchema>
+      >({
+        resolver: zodResolver(subjectSchema),
+      });
 
   // AFTER REACT 19 IT'LL BE USEACTIONSTATE
   const [state, formAction] = useFormState(type === "create" ? createSubject : updateSubject,

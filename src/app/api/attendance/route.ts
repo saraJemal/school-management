@@ -103,9 +103,9 @@ export async function GET(request: Request) {
     ]);
 
     const attendanceFormatted = attendance.map((record) => {
-      const year = record.date.getFullYear();
-      const month = String(record.date.getMonth() + 1).padStart(2, "0");
-      const day = String(record.date.getDate()).padStart(2, "0");
+      const year = record.date.getUTCFullYear();
+      const month = String(record.date.getUTCMonth() + 1).padStart(2, "0");
+      const day = String(record.date.getUTCDate()).padStart(2, "0");
 
       return {
         studentId: record.studentId,
