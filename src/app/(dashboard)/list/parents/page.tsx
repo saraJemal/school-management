@@ -26,6 +26,10 @@ const columns = [
     accessor:"info",
   },
   {
+    header: "Parent ID",
+    accessor: "id",
+  },
+  {
     header:"Student Names", 
     accessor:"students",
     className:"hidden md:table-cell",
@@ -56,17 +60,34 @@ const renderRow = (item:ParentList) => (
         <p className="text-xs text-gray-500">{item?.email}</p>
       </div>
     </td>
+    <td className="p-4 font-medium"> {item.id}</td>
     <td className="hidden md:table-cell">{item.students.map(student=>student.name).join(", ")}</td>
-    <td className="hidden md:table-cell">{item.phone}</td>
-    <td className="hidden md:table-cell">{item.address}</td>
+    <td className="hidden lg:table-cell">{item.phone}</td>
+    <td className="hidden lg:table-cell">{item.address}</td>
     <td>
       <div className="flex items-center g-2">
         {role === "admin" && (
-        <>
-        <FormContainer table="parent" type="update" data={item}/>
-        <FormContainer table="parent" type="delete" id={item.id}/>
-      </>
-      )}
+          <>
+            <FormContainer
+              table="parent"
+              type="update"
+              data={item}
+            />
+
+            <FormContainer
+              table="parent"
+              type="resetPassword"
+              id={item.id}
+              data={item}
+            />
+
+            <FormContainer
+              table="parent"
+              type="delete"
+              id={item.id}
+            />
+          </>
+        )}
      </div>
     </td>
    </tr>

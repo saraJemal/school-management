@@ -2,15 +2,13 @@ import TableSearch from "@/components/TableSearch";
 import Image from "next/image";
 import Pagination from "@/components/pagination";
 import Table from "@/components/Table";
-import Link from "next/link";
-import FormModal from "@/components/FormModal";
-import { Class, Prisma, Teacher } from "@prisma/client";
+import { Class, Prisma, Teacher, Grade } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { ITEM_PER_PAGE } from "@/lib/settings";
 import FormContainer from "@/components/FormContainer";
 import { auth } from "@clerk/nextjs/server";
 
-type ClassList = Class & {homeRoomTeacher: Teacher};
+type ClassList =   Class & {grade: Grade; homeRoomTeacher: Teacher | null };
 
 
 const ClassListPage = async({
@@ -55,8 +53,8 @@ const columns = [
    <tr key={item.id} className="border-b border-gray-200 even:bg-slate-200 text-sm hover:bg-red-100">
     <td className="flex items-center gap-4 p-4">{item.name}</td>
     <td className="hidden md:table-cell">{item.capacity}</td>
-    <td className="hidden md:table-cell">{item.name[0]}</td>
-    <td className="hidden md:table-cell">{item.homeRoomTeacher.name + " " + item.homeRoomTeacher.surname}</td>
+    <td className="hidden md:table-cell">{item.grade.name}</td>
+    <td className="hidden md:table-cell">{item.homeRoomTeacher? item.homeRoomTeacher.name + " " + item.homeRoomTeacher.surname: "Not assigned"}</td>
     <td>
       <div className="flex items-center g-2">
         {role === "admin" && (
@@ -96,6 +94,7 @@ const columns = [
    prisma.class.findMany({
     where: query,
     include:{
+      grade: true,
       homeRoomTeacher:true,
     },
     take:ITEM_PER_PAGE,

@@ -117,6 +117,128 @@ export const assessmentRowSchema = z.object({
 
 export type AssessmentRowSchema = z.infer<typeof assessmentRowSchema>;
 
+export const studentResultsSchema = z.object({
+  academicYearId: z.coerce
+    .number()
+    .min(1, {
+      message: "Academic year is required!",
+    }),
+
+  semester: z.nativeEnum(Semester, {
+    message: "Semester is required!",
+  }),
+
+  classId: z.coerce
+    .number()
+    .min(1, {
+      message: "Class is required!",
+    }),
+
+  subjectId: z.coerce
+    .number()
+    .min(1, {
+      message: "Subject is required!",
+    }),
+
+   results: z.record(
+    z.string(),
+    z.record(
+      z.string(),
+      z.coerce
+        .number()
+        .min(0, {
+          message: "Score cannot be negative!",
+        })
+        .optional()
+    )
+  ),
+});
+
+export type StudentResultsSchema = z.infer<typeof studentResultsSchema>;
+
+// =========================================================
+// REPORT CARD
+// =========================================================
+
+export const reportCardSchema = z.object({
+  id: z.coerce
+    .number()
+    .min(1, {
+      message: "Report card is required!",
+    }),
+
+  conductSemester1: z
+    .string()
+    .optional(),
+
+  conductSemester2: z
+    .string()
+    .optional(),
+
+  commentSemester1: z
+    .string()
+    .optional(),
+
+  commentSemester2: z
+    .string()
+    .optional(),
+
+  parentNameSemester1: z
+    .string()
+    .optional(),
+
+  parentNameSemester2: z
+    .string()
+    .optional(),
+
+  promotedGradeId: z
+    .coerce
+    .number()
+    .optional(),
+
+  detainedGradeId: z
+    .coerce
+    .number()
+    .optional(),
+
+  semester1Skills: z.object({
+    reading: z.string().optional(),
+    writing: z.string().optional(),
+    spelling: z.string().optional(),
+    comprehension: z.string().optional(),
+    computation: z.string().optional(),
+    punctuality: z.string().optional(),
+    uniform: z.string().optional(),
+    materialHandling: z.string().optional(),
+    direction: z.string().optional(),
+    completion: z.string().optional(),
+    englishUse: z.string().optional(),
+    workEthics: z.string().optional(),
+    skills: z.string().optional(),
+    overallProgress: z.string().optional(),
+  }),
+
+  semester2Skills: z.object({
+    reading: z.string().optional(),
+    writing: z.string().optional(),
+    spelling: z.string().optional(),
+    comprehension: z.string().optional(),
+    computation: z.string().optional(),
+    punctuality: z.string().optional(),
+    uniform: z.string().optional(),
+    materialHandling: z.string().optional(),
+    direction: z.string().optional(),
+    completion: z.string().optional(),
+    englishUse: z.string().optional(),
+    workEthics: z.string().optional(),
+    skills: z.string().optional(),
+    overallProgress: z.string().optional(),
+  }),
+});
+
+export type ReportCardSchema = z.infer<typeof reportCardSchema>;
+
+
 export const teacherSchema = z.object({
   id:z.string().optional(),
   username: z
@@ -137,7 +259,10 @@ export const teacherSchema = z.object({
   birthday: z.coerce.date({ message: "birth date is required!" }),
   sex: z.enum(["MALE", "FEMALE"], { message: "gender is required!" }),
   subjects: z.array(z.string()).optional(), // subject ids
-  supervisorSection: z.nativeEnum(GradeSection).optional(),
+ supervisorSection: z
+  .nativeEnum(GradeSection)
+  .optional()
+  .or(z.literal("")),
 });
 
 export type TeacherSchema = z.infer<typeof teacherSchema>; 
@@ -162,8 +287,6 @@ export const studentSchema = z.object({
   bloodType: z.string().min(1, { message: "bloodType is required!" }),
   birthday: z.coerce.date({ message: "birth date is required!" }),
   sex: z.enum(["MALE", "FEMALE"], { message: "gender is required!" }),
-  gradeId: z.coerce.number().min(1, {message:"Grade is required!"}),
-  classId: z.coerce.number().min(1, {message:"Class is required!"}),
   parentId: z.string().optional(),
 });
 
@@ -249,3 +372,67 @@ export const parentSchema = z.object({
 });
 
 export type ParentSchema = z.infer<typeof parentSchema>; 
+
+//----------------Admin Schema----------------
+export const adminSchema = z.object({
+   id: z.string().optional(),
+  username: z
+    .string()
+    .min(3, {
+      message: "Username must be at least 3 characters long!",
+    })
+    .max(20, {
+      message: "Username must be at most 20 characters long!",
+    }),
+
+  name: z
+    .string()
+    .min(2, {
+      message: "First name must be at least 2 characters long!",
+    })
+    .max(30, {
+      message: "First name must be at most 30 characters long!",
+    }),
+
+  surname: z
+    .string()
+    .min(2, {
+      message: "Last name must be at least 2 characters long!",
+    })
+    .max(30, {
+      message: "Last name must be at most 30 characters long!",
+    }),
+
+  password: z
+    .string()
+    .min(8, {
+      message: "Password must be at least 8 characters long!",
+    })
+    .or(z.literal("")),
+});
+
+export type AdminSchema = z.infer<typeof adminSchema>;
+
+ //------------------StudentEnrollmentSchema---------------------------
+
+export const StudentEnrollmentSchema = z.object({
+  id: z.coerce.number().optional(),
+
+  studentId: z.string().min(1, "Student is required"),
+
+  academicYearId: z.coerce
+    .number()
+    .positive("Academic year is required"),
+
+  classId: z.coerce
+    .number()
+    .positive("Class is required"),
+
+  rollNumber: z.coerce
+    .number()
+    .int()
+    .positive()
+    .optional(),
+});
+
+export type StudentEnrollmentSchema = z.infer<typeof StudentEnrollmentSchema>;

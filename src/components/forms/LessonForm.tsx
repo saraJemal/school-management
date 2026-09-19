@@ -2,7 +2,7 @@
 
 import { useForm } from "react-hook-form";
 import InputField from "../InputField";
-import { LessonSchema, lessonSchema } from "@/lib/formValidationSchemas";
+import { lessonSchema } from "@/lib/formValidationSchemas";
 import { createLesson, updateLesson } from "@/lib/actions";
 import { useFormState } from "react-dom";
 import { Dispatch, SetStateAction, useEffect } from "react";

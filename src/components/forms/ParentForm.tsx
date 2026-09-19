@@ -72,14 +72,15 @@ const ParentForm = ({
       register={register} 
       error={errors?.email}
       />
-      <InputField 
-      label="Password" 
-      name="password" 
-      type="password"
-      defaultValue={data?.password} 
-      register={register} 
-      error={errors?.password}
-      />
+      {type === "create" && (
+        <InputField
+          label="Password"
+          name="password"
+          type="password"
+          register={register}
+          error={errors?.password}
+        />
+      )}
     </div>
       <span className="text-sm text-gray-400 font-medium">Personal Information</span>
       <div className="flex justify-between flex-wrap gap-4">
@@ -112,14 +113,16 @@ const ParentForm = ({
           error={errors?.address}
         />
         
-        {data && (
+        {type === "update" && (
           <InputField
-            label="Id"
+            label="Parent ID"
             name="id"
-            defaultValue={data?.id}
             register={register}
             error={errors?.id}
-            hidden
+            defaultValue={data?.id}
+            inputProps={{
+              readOnly: true,
+            }}
           />
         )}
     </div>

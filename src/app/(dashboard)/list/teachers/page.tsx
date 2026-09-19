@@ -29,9 +29,14 @@ const columns = [
     header:"Info", 
     accessor:"info",
   },
-  {
+   {
     header:"Teacher ID", 
-    accessor:"teacherId",
+    accessor:"id",
+    className:"hidden md:table-cell",
+  },
+  {
+    header:"Username", 
+    accessor:"username",
     className:"hidden md:table-cell",
   },
   {
@@ -69,6 +74,7 @@ const columns = [
         <p className="text-xs text-gray-500">{item?.email}</p>
       </div>
     </td>
+    <td className="hidden md:table-cell">{item.id}</td>
     <td className="hidden md:table-cell">{item.username}</td>
     <td className="hidden md:table-cell">{item.subjects.map(subject=>subject.name).join(",")}</td>
     <td className="hidden md:table-cell">{item.classes.map(classItem=>classItem.name).join(",")}</td>

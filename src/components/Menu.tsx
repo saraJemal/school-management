@@ -1,7 +1,6 @@
 import Link from "next/link";
 import Image from "next/image";
-import { currentUser } from "@clerk/nextjs/server";
-
+import { auth } from "@clerk/nextjs/server";
 
 const menuItems = [
   {
@@ -14,6 +13,12 @@ const menuItems = [
         visible: ["admin", "teacher", "student", "parent"],
       },
       {
+        icon: "/profile.png",
+        label: "Adminstrators",
+        href: "/list/admins",
+        visible: ["admin"],
+      },
+      {
         icon: "/teacher.png",
         label: "Teachers",
         href: "/list/teachers",
@@ -24,6 +29,12 @@ const menuItems = [
         label: "Students",
         href: "/list/students",
         visible: ["admin", "teacher"],
+      },
+      {
+        icon: "/student.png",
+        label: "Student Enrollments",
+        href: "/list/student-enrollments",
+        visible: ["admin"],
       },
       {
         icon: "/parent.png",
@@ -50,9 +61,21 @@ const menuItems = [
         visible: ["admin", "teacher"],
       },
       {
-        icon: "/result.png",
+        icon: "/exam.png",
         label: "Assessments",
         href: "/list/assessments",
+        visible: ["admin", "teacher", "student", "parent"],
+      },
+      {
+        icon: "/result.png",
+        label: "Results",
+        href: "/list/results",
+        visible: ["admin", "teacher", "student", "parent"],
+      },
+      {
+        icon: "/result.png",
+        label: "Report Cards",
+        href: "/list/report-cards",
         visible: ["admin", "teacher", "student", "parent"],
       },
       {
@@ -60,6 +83,12 @@ const menuItems = [
         label: "Attendance",
         href: "/list/attendance",
         visible: ["admin", "teacher", "student", "parent"],
+      },
+      {
+        icon: "/result.png",
+        label: "Supervisor Results",
+        href: "/list/supervisor-results",
+        visible: ["admin", "teacher"],
       },
       {
         icon: "/calendar.png",
@@ -106,10 +135,12 @@ const menuItems = [
   },
 ];
 
-const Menu = async() => {
+const Menu = async () => {
+  const { sessionClaims } = auth();
 
-  const user = await currentUser();
-  const role = user?.publicMetadata?.role as string;
+  const role = (sessionClaims?.metadata as {
+    role?: string;
+  })?.role ?? "";
   return(
     <div className="">
       {menuItems.map((i) => (

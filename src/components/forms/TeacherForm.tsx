@@ -149,14 +149,16 @@ useEffect(() => {
           error={errors?.birthday}
           type="date"
         />
-        {data && (
+       {type === "update" && (
           <InputField
-            label="Id"
+            label="Teacher ID"
             name="id"
-            defaultValue={data?.id}
             register={register}
             error={errors?.id}
-            hidden
+            defaultValue={data?.id}
+            inputProps={{
+              readOnly: true,
+            }}
           />
         )}
         

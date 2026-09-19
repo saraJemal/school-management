@@ -2,6 +2,7 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import FormModal from "@/components/FormModal";
+
 type Subject = {
   id: number;
   name: string;
@@ -17,14 +18,17 @@ type Assessment = {
 };
 
 type Props = {
- academicYearId: number;
+  academicYearId: number;
+  role?: string;
 
   grades: {
     id: number;
     name: string;
   }[];
+
   selectedGradeId: number;
   selectedSemester: string;
+
   subjects: Subject[];
   assessments: Assessment[];
 };
@@ -47,7 +51,8 @@ const assessmentTypes = [
 ];
 
 const AssessmentDefinitionTable = ({
- academicYearId,
+  academicYearId,
+  role,
   grades,
   selectedGradeId,
   selectedSemester,
@@ -57,30 +62,85 @@ const AssessmentDefinitionTable = ({
   const router = useRouter();
   const searchParams = useSearchParams();
 
+  /*
+   * ----------------------------------------------------------
+   * PERMISSIONS
+   * ----------------------------------------------------------
+   *
+   * Assessment definitions can be created, edited, and deleted
+   * ONLY by admin.
+   *
+   * Teacher, student, and parent are READ-ONLY.
+   */
+  const canEdit = role === "admin";
+
+  /*
+   * ----------------------------------------------------------
+   * GRADE CHANGE
+   * ----------------------------------------------------------
+   *
+   * The server already controls which grades are available.
+   * Therefore students/parents cannot access another grade
+   * merely by changing the URL.
+   */
   const handleGradeChange = (
     e: React.ChangeEvent<HTMLSelectElement>
   ) => {
-    const params = new URLSearchParams(searchParams.toString());
+    const params = new URLSearchParams(
+      searchParams.toString()
+    );
 
-    params.set("gradeId", e.target.value);
-    params.set("semester", selectedSemester);
+    params.set(
+      "gradeId",
+      e.target.value
+    );
+
+    params.set(
+      "semester",
+      selectedSemester
+    );
+
     params.set("page", "1");
 
-    router.push(`?${params.toString()}`);
+    router.push(
+      `?${params.toString()}`
+    );
   };
 
+  /*
+   * ----------------------------------------------------------
+   * SEMESTER CHANGE
+   * ----------------------------------------------------------
+   */
   const handleSemesterChange = (
     e: React.ChangeEvent<HTMLSelectElement>
   ) => {
-    const params = new URLSearchParams(searchParams.toString());
+    const params = new URLSearchParams(
+      searchParams.toString()
+    );
 
-    params.set("gradeId", selectedGradeId.toString());
-    params.set("semester", e.target.value);
+    params.set(
+      "gradeId",
+      selectedGradeId.toString()
+    );
+
+    params.set(
+      "semester",
+      e.target.value
+    );
+
     params.set("page", "1");
 
-    router.push(`?${params.toString()}`);
+    router.push(
+      `?${params.toString()}`
+    );
   };
 
+  /*
+   * ----------------------------------------------------------
+   * FIND ASSESSMENT
+   * ----------------------------------------------------------
+   */
   const getAssessment = (
     subjectId: number,
     type: string
@@ -92,6 +152,11 @@ const AssessmentDefinitionTable = ({
     );
   };
 
+  /*
+   * ----------------------------------------------------------
+   * UI
+   * ----------------------------------------------------------
+   */
   return (
     <div className="mt-6">
 
@@ -104,20 +169,31 @@ const AssessmentDefinitionTable = ({
             Grade
           </label>
 
-          <select
-            value={selectedGradeId}
-            onChange={handleGradeChange}
-            className="ring-[1.5px] ring-gray-300 p-2 rounded-md text-sm min-w-[180px]"
-          >
-            {grades.map((grade) => (
-              <option
-                key={grade.id}
-                value={grade.id}
-              >
-                {grade.name}
-              </option>
-            ))}
-          </select>
+          {grades.length === 1 ? (
+            /*
+             * Student with one enrolled grade, or a parent with
+             * one child's grade: display the grade without giving
+             * an unnecessary selector.
+             */
+            <div className="ring-[1.5px] ring-gray-300 p-2 rounded-md text-sm min-w-[180px] bg-gray-50">
+              {grades[0].name}
+            </div>
+          ) : (
+            <select
+              value={selectedGradeId}
+              onChange={handleGradeChange}
+              className="ring-[1.5px] ring-gray-300 p-2 rounded-md text-sm min-w-[180px]"
+            >
+              {grades.map((grade) => (
+                <option
+                  key={grade.id}
+                  value={grade.id}
+                >
+                  {grade.name}
+                </option>
+              ))}
+            </select>
+          )}
         </div>
 
         {/* SEMESTER */}
@@ -150,119 +226,157 @@ const AssessmentDefinitionTable = ({
           <thead>
             <tr className="bg-gray-100 border-b">
 
-                <th className="p-3 text-left text-sm font-semibold whitespace-nowrap">
+              <th className="sticky left-0 z-20 bg-gray-100 p-3 text-left text-sm font-semibold whitespace-nowrap">
                 Subject
-                </th>
+              </th>
 
-                {assessmentTypes.map((type) => (
-                <th
+              {assessmentTypes.map(
+                (type) => (
+                  <th
                     key={type}
-                    className="px-3 py-3 text-center text-xs font-semibold whitespace-nowrap border-l"
-                >
+                    className="px-2 py-2 text-center text-xs font-semibold whitespace-nowrap border-l"
+                  >
                     {type}
-                </th>
-                ))}
+                  </th>
+                )
+              )}
 
-                <th className="px-3 py-3 text-center text-sm font-semibold border-l">
-                Actions
+              {canEdit && (
+                <th className="px-2 py-2 text-center text-sm font-semibold border-l">
+                  Actions
                 </th>
-                
+              )}
 
             </tr>
-            </thead>
+          </thead>
 
           <tbody>
-            {subjects.map((subject) => {
-                const subjectAssessments = assessments.filter(
-                (assessment) => assessment.subjectId === subject.id
-                );
+            {subjects.map(
+              (subject) => {
+                const subjectAssessments =
+                  assessments.filter(
+                    (assessment) =>
+                      assessment.subjectId ===
+                      subject.id
+                  );
 
                 return (
-                <tr
+                  <tr
                     key={subject.id}
                     className="border-b hover:bg-gray-50"
-                >
-                    <td className="p-3 text-sm font-medium whitespace-nowrap">
-                    {subject.name}
+                  >
+
+                    {/* SUBJECT */}
+                    <td className="sticky left-0 z-10 bg-white p-2 text-sm font-medium whitespace-nowrap border-r">
+                      {subject.name}
                     </td>
 
-                    {assessmentTypes.map((type) => {
-                    const assessment = getAssessment(
-                        subject.id,
-                        type
-                    );
+                    {/* ASSESSMENTS */}
+                    {assessmentTypes.map(
+                      (type) => {
+                        const assessment =
+                          getAssessment(
+                            subject.id,
+                            type
+                          );
 
-                    return (
-                        <td
-                        key={type}
-                        className="px-3 py-3 text-center border-l min-w-[85px]"
-                        >
-                        {assessment ? (
-                            <div className="flex flex-col items-center gap-1">
-                            <span className="text-sm font-medium">
-                                {assessment.maxScore}
-                            </span>
+                        return (
+                          <td
+                            key={type}
+                            className="px-2 py-2 text-center border-l min-w-[70px]"
+                          >
+                            {assessment ? (
+                              <div className="flex flex-col items-center gap-1">
 
-                            <span className="text-[10px] text-gray-500">
-                                {assessment.weight}%
-                            </span>
-                            </div>
-                        ) : (
-                            <span className="text-gray-300">
-                            —
-                            </span>
-                        )}
-                        </td>
-                    );
-                    })}
+                                <span className="text-sm font-medium">
+                                  {assessment.maxScore}
+                                </span>
 
-                    {/* ACTIONS */}
-                    <td className="px-3 py-3 border-l">
-                    <div className="flex items-center justify-center gap-2">
-                        <FormModal
-                        table="assessmentRow"
-                        type="update"
-                        data={{
-                            academicYearId,
-                            gradeId: selectedGradeId,
-                            subjectId: subject.id,
-                            subjectName: subject.name,
-                            semester: selectedSemester,
-                            assessments: subjectAssessments,
-                        }}
-                        />
+                                <span className="text-[10px] text-gray-500">
+                                  {assessment.weight}%
+                                </span>
 
-                        {subjectAssessments.length > 0 && (
-                        <FormModal
+                              </div>
+                            ) : (
+                              <span className="text-gray-300">
+                                —
+                              </span>
+                            )}
+                          </td>
+                        );
+                      }
+                    )}
+
+                    {/* ADMIN ACTIONS ONLY */}
+                    {canEdit && (
+                      <td className="px-2 py-2 border-l">
+                        <div className="flex items-center justify-center gap-2">
+
+                          {/* EDIT */}
+                          <FormModal
                             table="assessmentRow"
-                            type="delete"
+                            type="update"
                             data={{
-                            academicYearId,
-                            gradeId: selectedGradeId,
-                            subjectId: subject.id,
-                            subjectName: subject.name,
-                            semester: selectedSemester,
-                            assessments: subjectAssessments,
+                              academicYearId,
+                              gradeId:
+                                selectedGradeId,
+                              subjectId:
+                                subject.id,
+                              subjectName:
+                                subject.name,
+                              semester:
+                                selectedSemester,
+                              assessments:
+                                subjectAssessments,
                             }}
-                        />
-                        )}
-                    </div>
-                    </td>
-                </tr>
+                          />
+
+                          {/* DELETE */}
+                          {subjectAssessments.length >
+                            0 && (
+                            <FormModal
+                              table="assessmentRow"
+                              type="delete"
+                              data={{
+                                academicYearId,
+                                gradeId:
+                                  selectedGradeId,
+                                subjectId:
+                                  subject.id,
+                                subjectName:
+                                  subject.name,
+                                semester:
+                                  selectedSemester,
+                                assessments:
+                                  subjectAssessments,
+                              }}
+                            />
+                          )}
+
+                        </div>
+                      </td>
+                    )}
+
+                  </tr>
                 );
-            })}
+              }
+            )}
 
             {subjects.length === 0 && (
-                <tr>
+              <tr>
                 <td
-                    colSpan={assessmentTypes.length + 2}
-                    className="p-8 text-center text-gray-500"
+                  colSpan={
+                    assessmentTypes.length +
+                    (canEdit ? 2 : 1)
+                  }
+                  className="p-8 text-center text-gray-500"
                 >
-                    No subjects found for this grade.
+                  No subjects found for this grade.
                 </td>
-                </tr>
+              </tr>
             )}
-            </tbody>
+
+          </tbody>
 
         </table>
       </div>

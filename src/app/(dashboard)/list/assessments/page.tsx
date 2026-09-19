@@ -2,33 +2,9 @@ import TableSearch from "@/components/TableSearch";
 import Pagination from "@/components/pagination";
 import FormContainer from "@/components/FormContainer";
 import AssessmentDefinitionTable from "@/components/AssessmentDefinitionTable";
-import { Assessment, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { ITEM_PER_PAGE } from "@/lib/settings";
 import { auth } from "@clerk/nextjs/server";
-
-const assessmentTypes = [
-  "CW1",
-  "CW2",
-  "HW1",
-  "HW2",
-  "WS1",
-  "WS2",
-  "PROJECT",
-  "EXERCISE_BOOK",
-  "Q1",
-  "Q2",
-  "TEST1",
-  "TEST2",
-  "MIDTERM",
-  "FINAL",
-] as const;
-
-type AssessmentWithSubject = Assessment & {
-  subject: {
-    name: string;
-  };
-};
 
 const AssessmentListPage = async ({
   searchParams,
@@ -46,22 +22,13 @@ const AssessmentListPage = async ({
   const params = await searchParams;
 
   const page = params.page
-    ? parseInt(params.page)
+    ? Math.max(1, parseInt(params.page))
     : 1;
 
   const search = params.search || "";
 
   /*
-   * SELECTED GRADE
-   */
-  const requestedGradeId = params.gradeId
-    ? parseInt(params.gradeId)
-    : undefined;
-
-  /*
    * SEMESTER
-   *
-   * Default = Semester 1.
    */
   const selectedSemester =
     params.semester === "SEMESTER2"
@@ -89,9 +56,189 @@ const AssessmentListPage = async ({
   }
 
   /*
-   * GRADES
+   * ----------------------------------------------------------
+   * DETERMINE WHICH GRADES THE USER IS ALLOWED TO VIEW
+   * ----------------------------------------------------------
+   *
+   * ADMIN:
+   *   Can view all grades.
+   *
+   * TEACHER:
+   *   Can view assessment definitions for grades.
+   *   Assessment definitions remain READ-ONLY for teachers.
+   *
+   * STUDENT:
+   *   Only the student's current academic-year enrolled grade.
+   *
+   * PARENT:
+   *   Only the current academic-year enrolled grades of
+   *   the parent's children.
    */
+
+  let allowedGradeIds: number[] | undefined = undefined;
+
+  if (role === "student") {
+    if (!userId) {
+      return (
+        <div className="bg-white p-6 rounded-md m-4">
+          <p className="text-red-500">
+            User authentication could not be verified.
+          </p>
+        </div>
+      );
+    }
+
+    const student = await prisma.student.findUnique({
+      where: {
+        clerkUserId: userId,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!student) {
+      return (
+        <div className="bg-white p-6 rounded-md m-4">
+          <p className="text-red-500">
+            Student account could not be found.
+          </p>
+        </div>
+      );
+    }
+
+    const enrollment =
+      await prisma.studentEnrollment.findFirst({
+        where: {
+          studentId: student.id,
+          academicYearId: academicYear.id,
+        },
+        include: {
+          class: {
+            select: {
+              gradeId: true,
+            },
+          },
+        },
+      });
+
+    if (!enrollment) {
+      return (
+        <div className="bg-white p-6 rounded-md m-4">
+          <p className="text-red-500">
+            You are not enrolled in the current academic year.
+          </p>
+        </div>
+      );
+    }
+
+    allowedGradeIds = [
+      enrollment.class.gradeId,
+    ];
+  }
+
+  if (role === "parent") {
+    if (!userId) {
+      return (
+        <div className="bg-white p-6 rounded-md m-4">
+          <p className="text-red-500">
+            User authentication could not be verified.
+          </p>
+        </div>
+      );
+    }
+
+    const parent = await prisma.parent.findUnique({
+      where: {
+        clerkUserId: userId,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!parent) {
+      return (
+        <div className="bg-white p-6 rounded-md m-4">
+          <p className="text-red-500">
+            Parent account could not be found.
+          </p>
+        </div>
+      );
+    }
+
+    const children =
+      await prisma.student.findMany({
+        where: {
+          parentId: parent.id,
+
+          enrollments: {
+            some: {
+              academicYearId:
+                academicYear.id,
+            },
+          },
+        },
+
+        select: {
+          enrollments: {
+            where: {
+              academicYearId:
+                academicYear.id,
+            },
+
+            select: {
+              class: {
+                select: {
+                  gradeId: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+    allowedGradeIds = Array.from(
+      new Set(
+        children.flatMap((child) =>
+          child.enrollments.map(
+            (enrollment) =>
+              enrollment.class.gradeId
+          )
+        )
+      )
+    );
+
+    if (allowedGradeIds.length === 0) {
+      return (
+        <div className="bg-white p-6 rounded-md m-4">
+          <p className="text-red-500">
+            No child is enrolled in the current academic year.
+          </p>
+        </div>
+      );
+    }
+  }
+
+  /*
+   * ----------------------------------------------------------
+   * GRADES
+   * ----------------------------------------------------------
+   *
+   * For students and parents, only permitted grades are loaded.
+   * Admin and teacher retain the existing all-grade behavior.
+   */
+
   const grades = await prisma.grade.findMany({
+    where:
+      allowedGradeIds !== undefined
+        ? {
+            id: {
+              in: allowedGradeIds,
+            },
+          }
+        : undefined,
+
     orderBy: {
       level: "asc",
     },
@@ -108,8 +255,25 @@ const AssessmentListPage = async ({
   }
 
   /*
+   * ----------------------------------------------------------
    * SELECTED GRADE
+   * ----------------------------------------------------------
+   *
+   * Admin/teacher:
+   *   requested grade is accepted if it exists.
+   *
+   * Student/parent:
+   *   requested grade is accepted ONLY if it belongs to
+   *   their allowed grades.
+   *
+   * This prevents changing ?gradeId=... in the URL to access
+   * another grade.
    */
+
+  const requestedGradeId = params.gradeId
+    ? parseInt(params.gradeId)
+    : undefined;
+
   const gradeId =
     requestedGradeId &&
     grades.some(
@@ -123,116 +287,137 @@ const AssessmentListPage = async ({
   )!;
 
   /*
+   * ----------------------------------------------------------
    * SUBJECTS
+   * ----------------------------------------------------------
    *
-   * For now we use SubjectSection.
+   * Subjects are connected to grades through SubjectSection.
    *
-   * Later, when you populate SubjectSection,
-   * the subjects will automatically change
-   * according to the selected GradeSection.
+   * The important condition is:
+   *
+   *   SubjectSection.section === selectedGrade.section
+   *
+   * This is the correct relationship for your schema because
+   * SubjectSection is intentionally defined by:
+   *
+   *   subjectId + section
+   *
+   * ----------------------------------------------------------
+   *
+   * Teacher:
+   *   Assessment definitions remain view-only.
+   *   We therefore keep the existing behavior of displaying
+   *   the subjects belonging to the selected grade section.
+   *
+   * Student/Parent:
+   *   They see only subjects belonging to their permitted grade.
    */
-  const subjectWhere: Prisma.SubjectWhereInput = {
-    sections: {
-      some: {
-        section: selectedGrade.section,
-      },
-    },
 
-    ...(role === "teacher" && userId
-      ? {
-          teachers: {
-            some: {
-              id: userId,
-            },
-          },
-        }
-      : {}),
-
-    ...(search
-      ? {
-          name: {
-            contains: search,
-            mode: "insensitive",
-          },
-        }
-      : {}),
-  };
-
-  const allSubjects =
+  const subjects =
     await prisma.subject.findMany({
-      where: subjectWhere,
+      where: {
+        sections: {
+          some: {
+            section:
+              selectedGrade.section,
+          },
+        },
+
+        ...(search
+          ? {
+              name: {
+                contains: search,
+                mode: "insensitive",
+              },
+            }
+          : {}),
+      },
+
+      select: {
+        id: true,
+        name: true,
+      },
+
       orderBy: {
         name: "asc",
       },
     });
 
   /*
-   * PAGINATION BY SUBJECT
+   * ----------------------------------------------------------
+   * PAGINATION
+   * ----------------------------------------------------------
    */
-  const count = allSubjects.length;
+
+  const count = subjects.length;
 
   const start =
     ITEM_PER_PAGE * (page - 1);
 
-  const subjects = allSubjects.slice(
-    start,
-    start + ITEM_PER_PAGE
-  );
+  const paginatedSubjects =
+    subjects.slice(
+      start,
+      start + ITEM_PER_PAGE
+    );
 
   /*
-   * ASSESSMENTS
+   * ----------------------------------------------------------
+   * ASSESSMENT DEFINITIONS
+   * ----------------------------------------------------------
    *
-   * Get assessments belonging to:
-   * - current academic year
-   * - selected grade
-   * - selected semester
-   * - selected subjects
+   * Definitions are restricted to:
+   *
+   *   current academic year
+   *   selected grade
+   *   selected semester
+   *
+   * Student/parent grade access has already been validated
+   * above, so they cannot use an arbitrary gradeId.
    */
+
   const assessments =
-    subjects.length > 0
-      ? await prisma.assessment.findMany({
-          where: {
-            academicYearId:
-              academicYear.id,
+    await prisma.assessment.findMany({
+      where: {
+        academicYearId:
+          academicYear.id,
 
-            gradeId: selectedGrade.id,
+        gradeId:
+          selectedGrade.id,
 
-            semester: selectedSemester,
+        semester:
+          selectedSemester,
+      },
 
-            subjectId: {
-              in: subjects.map(
-                (subject) => subject.id
-              ),
-            },
+      include: {
+        subject: {
+          select: {
+            name: true,
           },
+        },
+      },
 
-          include: {
-            subject: {
-              select: {
-                name: true,
-              },
-            },
-          },
-
-          orderBy: [
-            {
-              subjectId: "asc",
-            },
-            {
-              id: "asc",
-            },
-          ],
-        })
-      : [];
+      orderBy: [
+        {
+          subjectId: "asc",
+        },
+        {
+          id: "asc",
+        },
+      ],
+    });
 
   /*
+   * ----------------------------------------------------------
    * MAIN PAGE
+   * ----------------------------------------------------------
    */
+
   return (
     <div className="bg-white p-4 rounded-md flex-1 m-4 mt-0">
 
       {/* TOP */}
       <div className="flex items-center justify-between">
+
         <h1 className="hidden md:block text-lg font-semibold">
           Assessment Definitions
         </h1>
@@ -243,11 +428,19 @@ const AssessmentListPage = async ({
 
           <div className="flex items-center gap-4 self-end">
 
-            {(role === "admin" ||
-              role === "teacher") && (
+            {/* ONLY ADMIN CAN CREATE */}
+            {role === "admin" && (
               <FormContainer
-                table="assessment"
+                table="assessmentRow"
                 type="create"
+                data={{
+                  academicYearId:
+                    academicYear.id,
+                  gradeId:
+                    selectedGrade.id,
+                  semester:
+                    selectedSemester,
+                }}
               />
             )}
 
@@ -293,25 +486,41 @@ const AssessmentListPage = async ({
 
       {/* ASSESSMENT DEFINITION TABLE */}
       <AssessmentDefinitionTable
-        academicYearId={academicYear.id}
-        grades={grades.map((grade) => ({
-          id: grade.id,
-          name: grade.name,
-        }))}
-        selectedGradeId={selectedGrade.id}
-        selectedSemester={selectedSemester}
-        subjects={subjects.map(
+        academicYearId={
+          academicYear.id
+        }
+
+        role={role}
+
+        grades={grades.map(
+          (grade) => ({
+            id: grade.id,
+            name: grade.name,
+          })
+        )}
+
+        selectedGradeId={
+          selectedGrade.id
+        }
+
+        selectedSemester={
+          selectedSemester
+        }
+
+        subjects={paginatedSubjects.map(
           (subject) => ({
             id: subject.id,
             name: subject.name,
           })
         )}
+
         assessments={assessments.map(
           (assessment) => ({
             id: assessment.id,
             subjectId:
               assessment.subjectId,
-            type: assessment.type,
+            type:
+              assessment.type,
             category:
               assessment.category,
             maxScore:

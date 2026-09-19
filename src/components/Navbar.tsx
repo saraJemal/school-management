@@ -34,4 +34,4 @@ const role = user?.publicMetadata?.role as string
   )
 }
 
-export default Navbar
+export default Navbar;

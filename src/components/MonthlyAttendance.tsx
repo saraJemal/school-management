@@ -1,633 +1,679 @@
-
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { saveMonthlyAttendance } from "@/lib/actions";
-import { useFormState } from "react-dom";
 import { toast } from "react-toastify";
+import { saveMonthlyAttendance } from "@/lib/actions";
 
-type ClassItem = {
-  id: number;
-  name: string;
-};
-
-type Student = {
+type StudentRow = {
   id: string;
   name: string;
   surname: string;
-  classId: number;
 };
 
-type AttendanceRecord = {
-  studentId: string;
-  date: string;
-  present: boolean | null;
+type Props = {
+  role: "admin" | "teacher" | "student" | "parent";
+  classes: {
+    id: number;
+    name: string;
+  }[];
+  initialClassId?: number;
 };
 
-type MonthlyAttendanceProps = {
-  classes: ClassItem[];
-  role: string;
-};
-
-const MonthlyAttendance = ({
-  classes,
+export default function MonthlyAttendance({
   role,
-}: MonthlyAttendanceProps) => {
-  const [selectedClassId, setSelectedClassId] = useState<number | "">(
-    classes.length === 1 ? classes[0].id : ""
-  );
+  classes,
+  initialClassId,
+}: Props) {
+  const isStudent = role === "student";
+  const isParent = role === "parent";
+  const canEditAttendance =
+    role === "admin" || role === "teacher";
+  const viewOnly = isStudent || isParent;
+
+  const [selectedClassId, setSelectedClassId] =
+    useState<number | null>(
+      initialClassId ?? classes[0]?.id ?? null
+    );
 
   const [selectedMonth, setSelectedMonth] = useState(() => {
     const now = new Date();
+
     return `${now.getFullYear()}-${String(
       now.getMonth() + 1
     ).padStart(2, "0")}`;
   });
 
-  const goToPreviousMonth = () => {
-      const [year, month] = selectedMonth.split("-").map(Number);
+  const [students, setStudents] = useState<StudentRow[]>([]);
 
-      const date = new Date(year, month - 2, 1);
+  const [attendance, setAttendance] = useState<
+    Record<string, Record<string, boolean | null>>
+  >({});
 
-      setSelectedMonth(
-        `${date.getFullYear()}-${String(
-          date.getMonth() + 1
-        ).padStart(2, "0")}`
-      );
-    };
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
 
-    const goToNextMonth = () => {
-      const [year, month] = selectedMonth.split("-").map(Number);
+  const monthDate = useMemo(
+    () => new Date(`${selectedMonth}-01T00:00:00`),
+    [selectedMonth]
+  );
 
-      const date = new Date(year, month, 1);
+  const year = monthDate.getFullYear();
+  const month = monthDate.getMonth();
 
-      setSelectedMonth(
-        `${date.getFullYear()}-${String(
-          date.getMonth() + 1
-        ).padStart(2, "0")}`
-      );
-    };
+  const daysInMonth = new Date(
+    year,
+    month + 1,
+    0
+  ).getDate();
 
-    const formattedMonth = useMemo(() => {
-      if (!selectedMonth) return "";
-
-      const [year, month] = selectedMonth.split("-").map(Number);
-
-      return new Intl.DateTimeFormat("en-US", {
-        month: "long",
-        year: "numeric",
-      }).format(new Date(year, month - 1, 1));
-    }, [selectedMonth]);
-
-    const [students, setStudents] = useState<Student[]>([]);
-    const [attendance, setAttendance] = useState<
-      Record<string, boolean | null>
-    >({});
-
-      const [loading, setLoading] = useState(false);
-
-      const [state, formAction] = useFormState(
-        saveMonthlyAttendance,
-        {
-          success: false,
-          error: false,
-        }
-      );
-
-      const days = useMemo(() => {
-        if (!selectedMonth) return [];
-
-        const [year, month] = selectedMonth.split("-").map(Number);
-
-        const numberOfDays = new Date(
+  const days = useMemo(() => {
+    return Array.from(
+      { length: daysInMonth },
+      (_, index) => {
+        const date = new Date(
           year,
           month,
-          0
-        ).getDate();
+          index + 1
+        );
 
-        return Array.from({ length: numberOfDays }, (_, index) => {
-          const date = new Date(
-            year,
-            month - 1,
-            index + 1
-          );
+        const dayOfWeek = date.getDay();
 
-          return {
-            date,
-            key: `${year}-${String(month).padStart(2, "0")}-${String(
-              index + 1
-            ).padStart(2, "0")}`,
-            day: index + 1,
-          };
-        });
-      }, [selectedMonth]);
+        return {
+          day: index + 1,
+          date: `${year}-${String(month + 1).padStart(
+            2,
+            "0"
+          )}-${String(index + 1).padStart(2, "0")}`,
+          weekday: date.toLocaleDateString(
+            "en-US",
+            {
+              weekday: "short",
+            }
+          ),
+
+          // Saturday = 6
+          // Sunday = 0
+          isWeekend:
+            dayOfWeek === 0 || dayOfWeek === 6,
+        };
+      }
+    );
+  }, [year, month, daysInMonth]);
+
+  const formattedMonth = monthDate.toLocaleDateString(
+    "en-US",
+    {
+      month: "long",
+      year: "numeric",
+    }
+  );
 
   useEffect(() => {
-    const loadAttendanceData = async () => {
-      if (!selectedClassId || !selectedMonth) {
-        setStudents([]);
-        setAttendance({});
-        return;
-      }
+    if (!selectedClassId) return;
 
-      setLoading(true);
-
+    const loadAttendance = async () => {
       try {
+        setLoading(true);
+
         const response = await fetch(
           `/api/attendance?classId=${selectedClassId}&month=${selectedMonth}`
         );
 
         if (!response.ok) {
-          throw new Error("Failed to load attendance");
+          throw new Error(
+            "Failed to load attendance."
+          );
         }
 
         const data = await response.json();
 
-        setStudents(data.students);
+        setStudents(data.students ?? []);
 
-        const attendanceMap: Record<string, boolean | null> = {};
+        const attendanceMap: Record<
+          string,
+          Record<string, boolean | null>
+        > = {};
 
-          for (const record of data.attendance) {
-            attendanceMap[
-              `${record.studentId}_${record.date}`
-            ] = record.present;
+        for (const student of data.students ?? []) {
+          attendanceMap[student.id] = {};
+
+          for (const day of days) {
+            attendanceMap[student.id][day.date] =
+              day.isWeekend
+                ? null
+                : null;
+          }
+        }
+
+        for (const record of data.attendance ?? []) {
+          const day = days.find(
+            (item) => item.date === record.date
+          );
+
+          // Never load attendance into weekend cells.
+          if (day?.isWeekend) continue;
+
+          if (!attendanceMap[record.studentId]) {
+            attendanceMap[record.studentId] = {};
           }
 
-          setAttendance(attendanceMap);
+          attendanceMap[record.studentId][record.date] =
+            record.present;
+        }
+
+        setAttendance(attendanceMap);
       } catch (error) {
         console.error(error);
-        toast.error("Failed to load attendance.");
+
+        toast.error(
+          "Failed to load attendance."
+        );
       } finally {
         setLoading(false);
       }
     };
 
-    loadAttendanceData();
-  }, [selectedClassId, selectedMonth]);
+    loadAttendance();
+  }, [selectedClassId, selectedMonth, days]);
 
-  useEffect(() => {
-    if (state.success) {
-      toast.success("Attendance has been saved!");
-    }
+  const previousMonth = () => {
+    const previous = new Date(
+      year,
+      month - 1,
+      1
+    );
 
-    if (state.error) {
-      toast.error(
-        "Something went wrong while saving attendance."
-      );
-    }
-  }, [state]);
+    setSelectedMonth(
+      `${previous.getFullYear()}-${String(
+        previous.getMonth() + 1
+      ).padStart(2, "0")}`
+    );
+  };
 
-  const getAttendance = (
+  const nextMonth = () => {
+    const next = new Date(
+      year,
+      month + 1,
+      1
+    );
+
+    setSelectedMonth(
+      `${next.getFullYear()}-${String(
+        next.getMonth() + 1
+      ).padStart(2, "0")}`
+    );
+  };
+
+  const toggleAttendance = (
     studentId: string,
     date: string
   ) => {
-    return attendance[
-      `${studentId}_${date}`
-    ];
-  };
+    if (viewOnly) return;
 
-  const getDailyTotals = (date: string) => {
-      let present = 0;
-      let absent = 0;
+    const day = days.find(
+      (item) => item.date === date
+    );
 
-      for (const student of students) {
-        const value = getAttendance(student.id, date);
+    // Weekends cannot be marked.
+    if (day?.isWeekend) return;
 
-        if (value === true) {
-          present++;
-        } else if (value === false) {
-          absent++;
-        }
+    setAttendance((previous) => {
+      const currentValue =
+        previous[studentId]?.[date] ?? null;
+
+      let nextValue: boolean | null;
+
+      if (currentValue === null) {
+        nextValue = true;
+      } else if (currentValue === true) {
+        nextValue = false;
+      } else {
+        nextValue = null;
       }
-
-      return { present, absent };
-    };
-
-    const getStudentTotals = (studentId: string) => {
-      let present = 0;
-      let absent = 0;
-
-      for (const day of days) {
-        const dayOfWeek = day.date.getDay();
-
-        // Don't count weekends
-        if (dayOfWeek === 0 || dayOfWeek === 6) {
-          continue;
-        }
-
-        const value = getAttendance(studentId, day.key);
-
-        if (value === true) {
-          present++;
-        } else if (value === false) {
-          absent++;
-        }
-      }
-
-      const recorded = present + absent;
-
-      const percentage =
-        recorded > 0
-          ? (present / recorded) * 100
-          : 0;
 
       return {
-        present,
-        absent,
-        percentage,
+        ...previous,
+        [studentId]: {
+          ...previous[studentId],
+          [date]: nextValue,
+        },
       };
-    };
+    });
+  };
 
-  const toggleAttendance = (
-      studentId: string,
-      date: string
-    ) => {
-      const key = `${studentId}_${date}`;
+  const markAllPresent = (date: string) => {
+    if (!canEditAttendance) return;
 
-      setAttendance((previous) => {
-        const current = previous[key];
+    const day = days.find(
+      (item) => item.date === date
+    );
 
-        let next: boolean | null;
+    // Weekends cannot be marked.
+    if (day?.isWeekend) return;
 
-        if (current === null || current === undefined) {
-          // Not recorded → Present
-          next = true;
-        } else if (current === true) {
-          // Present → Absent
-          next = false;
-        } else {
-          // Absent → Not recorded
-          next = null;
-        }
+    setAttendance((previous) => {
+      const updated = { ...previous };
 
-        return {
-          ...previous,
-          [key]: next,
+      for (const student of students) {
+        updated[student.id] = {
+          ...updated[student.id],
+          [date]: true,
         };
-      });
-    };
+      }
 
-    const markAllPresent = (date: string) => {
-      setAttendance((previous) => {
-        const updated = { ...previous };
+      return updated;
+    });
+  };
 
-        for (const student of students) {
-          updated[`${student.id}_${date}`] = true;
-        }
-
-        return updated;
-      });
-    };
-
-  const handleSave = () => {
-    if (!selectedClassId) {
-      toast.error("Please select a class.");
+  const saveAttendance = async () => {
+    if (
+      !canEditAttendance ||
+      !selectedClassId
+    ) {
       return;
     }
 
-    const records: AttendanceRecord[] = [];
-    
+    try {
+      setSaving(true);
 
-    for (const student of students) {
-      for (const day of days) {
-        const key = `${student.id}_${day.key}`;
+      const records = students.flatMap(
+        (student) =>
+          days
+            // Never save weekends.
+            .filter(
+              (day) =>
+                !day.isWeekend &&
+                attendance[student.id]?.[
+                  day.date
+                ] !== null
+            )
+            .map((day) => ({
+              studentId: student.id,
+              date: day.date,
+              present:
+                attendance[student.id][day.date]!,
+            }))
+      );
 
-        // Only send cells that have been explicitly recorded
-        // or explicitly changed back to "not recorded".
-        if (key in attendance) {
-          records.push({
-            studentId: student.id,
-            date: day.key,
-            present: attendance[key],
-          });
-        }
+      const result =
+        await saveMonthlyAttendance(
+          {
+            success: false,
+            error: false,
+          },
+          {
+            classId: selectedClassId,
+            attendance: records,
+          }
+        );
+
+      if (result.success) {
+        toast.success(
+          "Attendance saved successfully."
+        );
+      } else {
+        toast.error(
+          "Failed to save attendance."
+        );
       }
-    }
+    } catch (error) {
+      console.error(
+        "SAVE ATTENDANCE ERROR:",
+        error
+      );
 
-    formAction({
-      classId: selectedClassId,
-      attendance: records,
-    });
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Failed to save attendance."
+      );
+    } finally {
+      setSaving(false);
+    }
   };
- 
 
   return (
-    <div className="flex flex-col gap-6">
-      {/* HEADER */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-        <h1 className="text-xl font-semibold">
+    <div className="bg-white p-4 rounded-md flex-1 m-4 mt-0">
+      <div className="flex items-center justify-between mb-4">
+        <h1 className="text-lg font-semibold">
           Monthly Attendance
         </h1>
 
-        <div className="flex flex-col sm:flex-row gap-4">
-          {/* CLASS */}
-          <div className="flex flex-col gap-2">
-            <label className="text-xs text-gray-500">
-              Class
-            </label>
-
-            {role === "teacher" && classes.length === 1 ? (
-              <div className="ring-[1.5px] ring-gray-300 p-2 rounded-md text-sm min-w-[180px] bg-gray-50">
-                {classes[0].name}
-              </div>
-            ) : (
-              <select
-                value={selectedClassId}
-                onChange={(e) =>
-                  setSelectedClassId(
-                    e.target.value
-                      ? Number(e.target.value)
-                      : ""
-                  )
-                }
-                className="ring-[1.5px] ring-gray-300 p-2 rounded-md text-sm min-w-[180px]"
+        <div className="flex items-center gap-3">
+          <select
+            value={selectedClassId ?? ""}
+            onChange={(e) =>
+              setSelectedClassId(
+                e.target.value
+                  ? Number(e.target.value)
+                  : null
+              )
+            }
+            className="border rounded-md px-3 py-2 text-sm"
+          >
+            {classes.map((item) => (
+              <option
+                key={item.id}
+                value={item.id}
               >
-                <option value="">
-                  Select Class
-                </option>
+                {item.name}
+              </option>
+            ))}
+          </select>
 
-                {classes.map((classItem) => (
-                  <option
-                    value={classItem.id}
-                    key={classItem.id}
-                  >
-                    {classItem.name}
-                  </option>
-                ))}
-              </select>
-            )}
+          <button
+            type="button"
+            onClick={previousMonth}
+            className="border rounded-md px-3 py-2 text-sm"
+          >
+            Previous
+          </button>
+
+          <div className="font-medium min-w-[130px] text-center">
+            {formattedMonth}
           </div>
 
-          {/* MONTH NAVIGATION */}
-          <div className="flex flex-col gap-2">
-            <label className="text-xs text-gray-500">
-              Month
-            </label>
-
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={goToPreviousMonth}
-                className="px-3 py-2 border rounded-md hover:bg-gray-100"
-                title="Previous month"
-              >
-                ←
-              </button>
-
-              <div className="min-w-[150px] text-center font-medium text-sm">
-                {formattedMonth}
-              </div>
-
-              <button
-                type="button"
-                onClick={goToNextMonth}
-                className="px-3 py-2 border rounded-md hover:bg-gray-100"
-                title="Next month"
-              >
-                →
-              </button>
-            </div>
-          </div>
+          <button
+            type="button"
+            onClick={nextMonth}
+            className="border rounded-md px-3 py-2 text-sm"
+          >
+            Next
+          </button>
         </div>
       </div>
 
-      {/* ATTENDANCE TABLE */}
-      {!selectedClassId ? (
-        <div className="text-gray-500 text-sm p-6 text-center">
-          Please select a class to view attendance.
-        </div>
-      ) : loading ? (
-        <div className="text-gray-500 text-sm p-6 text-center">
+      {loading ? (
+        <div className="py-10 text-center text-gray-500">
           Loading attendance...
         </div>
-      ) : students.length === 0 ? (
-        <div className="text-gray-500 text-sm p-6 text-center">
-          No students found in this class.
-        </div>
       ) : (
-        <div className="overflow-x-auto border rounded-md">
-          <table className="w-full text-sm border-collapse">
-            <thead>
-              <tr className="bg-gray-100 border-b">
-                <th className="sticky left-0 bg-gray-100 p-3 text-left min-w-[180px]">
-                  Student
-                </th>
-
-                {days.map((day) => {
-                const dayOfWeek = day.date.getDay();
-                const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-
-                return (
-                  <th
-                    key={day.key}
-                    className={`p-1 text-center min-w-[50px] ${
-                      isWeekend
-                        ? "bg-gray-200 text-gray-400"
-                        : ""
-                    }`}
-                  >
-                    <div className="flex flex-col items-center gap-1">
-                      <span>{day.day}</span>
-
-                      <button
-                        type="button"
-                        disabled={isWeekend || students.length === 0}
-                        onClick={() => markAllPresent(day.key)}
-                        className={`w-6 h-6 rounded text-xs font-bold ${
-                          isWeekend
-                            ? "bg-gray-300 text-gray-400 cursor-not-allowed"
-                            : "bg-green-100 text-green-700 hover:bg-green-200"
-                        }`}
-                        title={
-                          isWeekend
-                            ? "Weekend"
-                            : "Mark all students present"
-                        }
-                      >
-                        ✓
-                      </button>
-                    </div>
+        <>
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse">
+              <thead>
+                <tr>
+                  <th className="border p-2 text-left min-w-[180px]">
+                    Student
                   </th>
-                );
-              })}
 
-              <th className="p-2 text-center min-w-[75px] bg-gray-100">
+                  <th className="border p-2 text-left min-w-[100px]">
+                    ID
+                  </th>
+
+                  {days.map((day) => (
+                    <th
+                      key={day.date}
+                      className={`border p-1 text-center min-w-[48px] ${
+                        day.isWeekend
+                          ? "bg-gray-200 text-gray-400"
+                          : ""
+                      }`}
+                    >
+                      <div className="text-xs font-semibold">
+                        {day.day}
+                      </div>
+
+                      <div className="text-[10px] text-gray-500">
+                        {day.weekday}
+                      </div>
+
+                      {canEditAttendance && (
+                        <button
+                          type="button"
+                          title={
+                            day.isWeekend
+                              ? "Weekend"
+                              : "Mark all present"
+                          }
+                          disabled={
+                            day.isWeekend
+                          }
+                          onClick={() =>
+                            markAllPresent(
+                              day.date
+                            )
+                          }
+                          className={`mt-1 font-bold ${
+                            day.isWeekend
+                              ? "text-gray-300 cursor-not-allowed"
+                              : "text-green-600"
+                          }`}
+                        >
+                          ✓
+                        </button>
+                      )}
+                    </th>
+                  ))}
+
+                  <th className="border p-2 text-center">
                     Present
                   </th>
 
-                  <th className="p-2 text-center min-w-[70px] bg-gray-100">
+                  <th className="border p-2 text-center">
                     Absent
                   </th>
 
-                  <th className="p-2 text-center min-w-[90px] bg-gray-100">
-                    Attendance
+                  <th className="border p-2 text-center">
+                    %
                   </th>
-              </tr>
-            </thead>
+                </tr>
+              </thead>
 
-            <tbody>
-              {students.map((student) => (
-                <tr
-                  key={student.id}
-                  className="border-b hover:bg-gray-50"
-                >
-                  <td className="sticky left-0 bg-white p-3 font-medium">
-                    {student.name} {student.surname}
+              <tbody>
+                {students.map((student) => {
+                  const studentAttendance =
+                    attendance[student.id] ?? {};
+
+                  const totals = days.reduce(
+                    (result, day) => {
+                      // Weekends do not count.
+                      if (day.isWeekend) {
+                        return result;
+                      }
+
+                      const value =
+                        studentAttendance[
+                          day.date
+                        ] ?? null;
+
+                      if (value === true) {
+                        result.present++;
+                      } else if (
+                        value === false
+                      ) {
+                        result.absent++;
+                      }
+
+                      return result;
+                    },
+                    {
+                      present: 0,
+                      absent: 0,
+                    }
+                  );
+
+                  const recorded =
+                    totals.present +
+                    totals.absent;
+
+                  const percentage =
+                    recorded > 0
+                      ? (
+                          (totals.present /
+                            recorded) *
+                          100
+                        ).toFixed(2)
+                      : "0.00";
+
+                  return (
+                    <tr key={student.id}>
+                      <td className="border p-2">
+                        {student.name}{" "}
+                        {student.surname}
+                      </td>
+
+                      <td className="border p-2">
+                        {student.id}
+                      </td>
+
+                      {days.map((day) => {
+                        const value =
+                          studentAttendance[
+                            day.date
+                          ] ?? null;
+
+                        // Weekend cells are always
+                        // disabled and gray.
+                        if (day.isWeekend) {
+                          return (
+                            <td
+                              key={day.date}
+                              className="border p-1 text-center bg-gray-200"
+                            >
+                              <button
+                                type="button"
+                                disabled
+                                className="w-full h-8 text-gray-400 cursor-not-allowed"
+                              >
+                                -
+                              </button>
+                            </td>
+                          );
+                        }
+
+                        const label =
+                          value === true
+                            ? "✓"
+                            : value === false
+                            ? "X"
+                            : "-";
+
+                        const cellClass =
+                          value === true
+                            ? "text-green-600 font-bold"
+                            : value === false
+                            ? "text-red-600 font-bold"
+                            : "text-gray-400";
+
+                        return (
+                          <td
+                            key={day.date}
+                            className="border p-1 text-center"
+                          >
+                            <button
+                              type="button"
+                              disabled={viewOnly}
+                              onClick={() =>
+                                toggleAttendance(
+                                  student.id,
+                                  day.date
+                                )
+                              }
+                              className={`w-full h-8 ${cellClass} ${
+                                viewOnly
+                                  ? "cursor-default"
+                                  : "cursor-pointer"
+                              }`}
+                            >
+                              {label}
+                            </button>
+                          </td>
+                        );
+                      })}
+
+                      <td className="border p-2 text-center text-green-600 font-semibold">
+                        {totals.present}
+                      </td>
+
+                      <td className="border p-2 text-center text-red-600 font-semibold">
+                        {totals.absent}
+                      </td>
+
+                      <td className="border p-2 text-center font-semibold">
+                        {percentage}%
+                      </td>
+                    </tr>
+                  );
+                })}
+
+                <tr>
+                  <td
+                    colSpan={2}
+                    className="border p-2 font-semibold text-right"
+                  >
+                    Daily Totals
                   </td>
 
                   {days.map((day) => {
-                      const key = `${student.id}_${day.key}`;
-
-                      const present = getAttendance(
-                        student.id,
-                        day.key
-                      );
-
-                      const dayOfWeek = day.date.getDay();
-                      const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-
-
+                    if (day.isWeekend) {
                       return (
-                      <td
-                          key={key}
-                          className={`p-2 text-center ${
-                            isWeekend ? "bg-gray-100" : ""
-                          }`}
+                        <td
+                          key={day.date}
+                          className="border p-1 text-center bg-gray-200 text-gray-400"
                         >
-                        <button
-                            type="button"
-                            disabled={isWeekend}
-                            onClick={() => {
-                              if (!isWeekend) {
-                                toggleAttendance(
-                                  student.id,
-                                  day.key
-                                );
-                              }
-                            }}
-                            className={`w-7 h-7 rounded-md font-semibold text-sm ${
-                              isWeekend
-                                ? "bg-gray-200 text-gray-400 cursor-not-allowed"
-                                : present === true
-                                ? "bg-green-100 text-green-700"
-                                : present === false
-                                ? "bg-red-100 text-red-700"
-                                : "bg-gray-100 text-gray-400 hover:bg-gray-200"
-                            }`}
-                            title={
-                              isWeekend
-                                ? "Weekend"
-                                : present === true
-                                ? "Present"
-                                : present === false
-                                ? "Absent"
-                                : "Not recorded"
-                            }
-                          >
-                            {isWeekend
-                              ? "–"
-                              : present === true
-                              ? "✓"
-                              : present === false
-                              ? "✗"
-                              : "–"}
-                          </button>
+                          -
+                        </td>
+                      );
+                    }
+
+                    let present = 0;
+                    let absent = 0;
+
+                    for (const student of students) {
+                      const value =
+                        attendance[
+                          student.id
+                        ]?.[day.date] ?? null;
+
+                      if (value === true)
+                        present++;
+
+                      if (value === false)
+                        absent++;
+                    }
+
+                    return (
+                      <td
+                        key={day.date}
+                        className="border p-1 text-center text-xs"
+                      >
+                        <div className="text-green-600">
+                          P:{present}
+                        </div>
+
+                        <div className="text-red-600">
+                          A:{absent}
+                        </div>
                       </td>
                     );
                   })}
 
-                  {/* STUDENT TOTALS */}
-                    {(() => {
-                    const totals = getStudentTotals(student.id);
-
-                    return (
-                      <>
-                        <td className="p-2 text-center font-semibold">
-                          {totals.present}
-                        </td>
-
-                        <td className="p-2 text-center font-semibold">
-                          {totals.absent}
-                        </td>
-
-                        <td className="p-2 text-center font-semibold">
-                          {totals.percentage.toFixed(1)}%
-                        </td>
-                      </>
-                    );
-                  })()}
+                  <td
+                    colSpan={3}
+                    className="border"
+                  />
                 </tr>
-              ))}
-              {/* DAILY TOTALS */}
-              <tr className="border-t-2 bg-green-50">
-                <td className="sticky left-0 bg-green-50 p-3 font-semibold">
-                  Present
-                </td>
+              </tbody>
+            </table>
+          </div>
 
-                {days.map((day) => {
-                  const dayOfWeek = day.date.getDay();
-                  const isWeekend =
-                    dayOfWeek === 0 || dayOfWeek === 6;
-
-                  const { present } = getDailyTotals(day.key);
-
-                  return (
-                    <td
-                      key={day.key}
-                      className={`p-2 text-center font-semibold ${
-                        isWeekend ? "bg-gray-200 text-gray-400" : ""
-                      }`}
-                    >
-                      {isWeekend ? "–" : present}
-                    </td>
-                  );
-                })}
-              </tr>
-
-              <tr className="bg-red-50">
-                <td className="sticky left-0 bg-red-50 p-3 font-semibold">
-                  Absent
-                </td>
-
-                {days.map((day) => {
-                  const dayOfWeek = day.date.getDay();
-                  const isWeekend =
-                    dayOfWeek === 0 || dayOfWeek === 6;
-
-                  const { absent } = getDailyTotals(day.key);
-
-                  return (
-                    <td
-                      key={day.key}
-                      className={`p-2 text-center font-semibold ${
-                        isWeekend ? "bg-gray-200 text-gray-400" : ""
-                      }`}
-                    >
-                      {isWeekend ? "–" : absent}
-                    </td>
-                  );
-                })}
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* SAVE */}
-      {selectedClassId && students.length > 0 && (
-        <div className="flex justify-end">
-          <button
-            type="button"
-            onClick={handleSave}
-            className="bg-badirBlue text-white px-6 py-2 rounded-md"
-          >
-            Save Attendance
-          </button>
-        </div>
+          {canEditAttendance && (
+            <div className="flex justify-end mt-4">
+              <button
+                type="button"
+                onClick={saveAttendance}
+                disabled={saving}
+                className="bg-blue-600 text-white px-4 py-2 rounded-md disabled:opacity-50"
+              >
+                {saving
+                  ? "Saving..."
+                  : "Save Attendance"}
+              </button>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
-};
-
-export default MonthlyAttendance;
-
+}

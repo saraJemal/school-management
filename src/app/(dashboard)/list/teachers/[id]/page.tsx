@@ -50,12 +50,21 @@ const role = (sessionClaims?.metadata as {role?:string})?.role;
         <div className="w-2/3 flex flex-col justify-between gap-4">
         <div className="flex items-center gap-4"> 
         <h1 className="text-xl font-semibold">{teacher.name + " " + teacher.surname}</h1>
-        {role === "admin" && ( 
-        <FormContainer 
-        table="teacher" 
-        type="update" 
-        data={teacher}
-          />
+        {role === "admin" && (
+          <div className="flex items-center gap-2">
+            <FormContainer
+              table="teacher"
+              type="update"
+              data={teacher}
+            />
+
+            <FormContainer
+              table="teacher"
+              type="resetPassword"
+              id={teacher.id}
+              data={teacher}
+            />
+          </div>
         )}
         
         </div>
@@ -118,7 +127,7 @@ const role = (sessionClaims?.metadata as {role?:string})?.role;
       </div>
       {/*Bottom*/}
       <div className="mt-4 bg-white rounded-md p-4 h-[800px]">
-        <h1>Teacher's Schedule</h1>
+        <h1>Teacher&apos;s Schedule</h1>
         <BigCalendarContainer type="teacherId" id={teacher.id}/>
       </div>
       </div>
@@ -127,11 +136,11 @@ const role = (sessionClaims?.metadata as {role?:string})?.role;
         <div className="bg-white p-4 rounded-md">
           <h1 className="text-xl font-semibold">Shortcuts</h1>
           <div className="mt-4 flex gap-4 flex-wrap text-xs text-gray-500">
-            <Link className="p-3 rounded-md bg-saraSkyLight" href={`/list/classes?homeRoomTeacherId=${"teacher2"}`}>Teacher's Classes</Link>
-            <Link className="p-3 rounded-md bg-saraSkyLight" href={`/list/students?teacherId=${"teacher2"}`}>Teacher's Students</Link>
-            <Link className="p-3 rounded-md bg-saraPurpleLight" href={`/list/lessons?teacherId=${"teacher2"}`}>Teacher's Lessons</Link>
-            <Link className="p-3 rounded-md bg-saraYellowLight" href={`/list/exams?teacherId=${"teacher2"}`}>Teacher's Exams</Link>
-            <Link className="p-3 rounded-md bg-saraSkyLight" href={`/list/assignments?teacherId=${"teacher2"}`}>Teacher's Assignments</Link>
+            <Link className="p-3 rounded-md bg-saraSkyLight" href={`/list/classes?homeRoomTeacherId=${"teacher2"}`}>Teacher&apos;s Classes</Link>
+            <Link className="p-3 rounded-md bg-saraSkyLight" href={`/list/students?teacherId=${"teacher2"}`}>Teacher&apos;s Students</Link>
+            <Link className="p-3 rounded-md bg-saraPurpleLight" href={`/list/lessons?teacherId=${"teacher2"}`}>Teacher&apos;s Lessons</Link>
+            <Link className="p-3 rounded-md bg-saraYellowLight" href={`/list/exams?teacherId=${"teacher2"}`}>Teacher&apos;s Exams</Link>
+            <Link className="p-3 rounded-md bg-saraSkyLight" href={`/list/assignments?teacherId=${"teacher2"}`}>Teacher&apos;s Assignments</Link>
           </div>
         </div>
         <Performance/>
