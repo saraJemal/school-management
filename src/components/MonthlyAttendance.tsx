@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "react-toastify";
 import { saveMonthlyAttendance } from "@/lib/actions";
+import { calculateAttendanceSummary } from "@/lib/attendance";
+
 
 type StudentRow = {
   id: string;
@@ -465,47 +467,31 @@ export default function MonthlyAttendance({
                   const studentAttendance =
                     attendance[student.id] ?? {};
 
-                  const totals = days.reduce(
-                    (result, day) => {
-                      // Weekends do not count.
-                      if (day.isWeekend) {
-                        return result;
-                      }
+                  const attendanceRecords = days
+                    .filter((day) => !day.isWeekend)
+                    .map((day) => ({
+                      date: day.date,
+                      present:
+                        studentAttendance[day.date] ??
+                        null,
+                    }))
+                    .filter(
+                      (
+                        record
+                      ): record is {
+                        date: string;
+                        present: boolean;
+                      } =>
+                        record.present !== null
+                    );
 
-                      const value =
-                        studentAttendance[
-                          day.date
-                        ] ?? null;
-
-                      if (value === true) {
-                        result.present++;
-                      } else if (
-                        value === false
-                      ) {
-                        result.absent++;
-                      }
-
-                      return result;
-                    },
-                    {
-                      present: 0,
-                      absent: 0,
-                    }
-                  );
-
-                  const recorded =
-                    totals.present +
-                    totals.absent;
+                  const totals =
+                    calculateAttendanceSummary(
+                      attendanceRecords
+                    );
 
                   const percentage =
-                    recorded > 0
-                      ? (
-                          (totals.present /
-                            recorded) *
-                          100
-                        ).toFixed(2)
-                      : "0.00";
-
+                    totals.percentage.toFixed(2);
                   return (
                     <tr key={student.id}>
                       <td className="border p-2">
