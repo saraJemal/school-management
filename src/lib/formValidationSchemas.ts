@@ -163,44 +163,40 @@ export type StudentResultsSchema = z.infer<typeof studentResultsSchema>;
 export const reportCardSchema = z.object({
   id: z.coerce
     .number()
-    .min(1, {
-      message: "Report card is required!",
-    }),
+    .min(1, { message: "Report card is required!" }),
 
+  // ---------------------------------------------------------
+  // EDITABLE: CONDUCT
+  // ---------------------------------------------------------
   conductSemester1: z
-    .string()
-    .optional(),
+    .enum(["A", "B", "C", "D", "E"])
+    .optional()
+    .or(z.literal("")),
 
   conductSemester2: z
-    .string()
-    .optional(),
+    .enum(["A", "B", "C", "D", "E"])
+    .optional()
+    .or(z.literal("")),
 
-  commentSemester1: z
-    .string()
-    .optional(),
+  // ---------------------------------------------------------
+  // EDITABLE: HOMEROOM TEACHER COMMENTS
+  // ---------------------------------------------------------
+  commentSemester1: z.string().optional(),
 
-  commentSemester2: z
-    .string()
-    .optional(),
+  commentSemester2: z.string().optional(),
 
-  parentNameSemester1: z
-    .string()
-    .optional(),
+  // ---------------------------------------------------------
+  // EDITABLE: DIGITAL SIGNATURES
+  // ---------------------------------------------------------
+  teacherSignatureSemester1: z.string().optional(),
 
-  parentNameSemester2: z
-    .string()
-    .optional(),
+  teacherSignatureSemester2: z.string().optional(),
 
-  promotedGradeId: z
-    .coerce
-    .number()
-    .optional(),
+  managingDirectorSignature: z.string().optional(),
 
-  detainedGradeId: z
-    .coerce
-    .number()
-    .optional(),
-
+  // ---------------------------------------------------------
+  // EDITABLE: BASIC SKILLS
+  // ---------------------------------------------------------
   semester1Skills: z.object({
     reading: z.string().optional(),
     writing: z.string().optional(),
@@ -238,7 +234,6 @@ export const reportCardSchema = z.object({
 
 export type ReportCardSchema = z.infer<typeof reportCardSchema>;
 
-
 export const teacherSchema = z.object({
   id:z.string().optional(),
   username: z
@@ -251,6 +246,7 @@ export const teacherSchema = z.object({
   .optional().or(z.literal("")),
   password: z.string().min(8, { message: "Password must be at least 8 characters long!" }).optional().or(z.literal("")),
   name: z.string().min(1, { message: "First name is required!" }),
+  middleName: z.string().optional(),
   surname: z.string().min(1, { message: "Last name is required!" }),
   phone: z.string().optional(),
   address: z.string(),
@@ -280,6 +276,7 @@ export const studentSchema = z.object({
   .optional().or(z.literal("")),
   password: z.string().min(8, { message: "Password must be at least 8 characters long!" }).optional().or(z.literal("")),
   name: z.string().min(1, { message: "First name is required!" }),
+  middleName: z.string().optional(),
   surname: z.string().min(1, { message: "Last name is required!" }),
   phone: z.string().optional(),
   address: z.string(),
@@ -366,6 +363,7 @@ export const parentSchema = z.object({
   .optional().or(z.literal("")),
   password: z.string().min(8, { message: "Password must be at least 8 characters long!" }).optional().or(z.literal("")),
   name: z.string().min(1, { message: "First name is required!" }),
+  middleName: z.string().optional(),
   surname: z.string().min(1, { message: "Last name is required!" }),
   phone: z.string(),
   address: z.string(),
@@ -393,7 +391,7 @@ export const adminSchema = z.object({
     .max(30, {
       message: "First name must be at most 30 characters long!",
     }),
-
+  middleName: z.string().optional(),
   surname: z
     .string()
     .min(2, {

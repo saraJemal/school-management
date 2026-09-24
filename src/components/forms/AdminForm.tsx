@@ -36,6 +36,7 @@ const AdminForm = ({
       id: data?.id ?? "",
       username: data?.username ?? "",
       name: data?.name ?? "",
+      middleName: data?.middleName ?? "",
       surname: data?.surname ?? "",
 
     },
@@ -143,7 +144,13 @@ const AdminForm = ({
           register={register}
           error={errors?.name}
         />
-
+        <InputField
+          label="Middle Name"
+          name="middleName"
+          defaultValue={data?.middleName ?? ""}
+          register={register}
+          error={errors?.middleName}
+        />
         <InputField
           label="Last Name"
           name="surname"

@@ -8,19 +8,23 @@ datasource db {
 }
 
 model Admin {
-  id          String   @id
-  username    String   @unique
-  createdAt   DateTime @default(now())
-  clerkUserId String?  @unique
-  name        String   @default("")
-  surname     String   @default("")
+  id                            String       @id
+  username                      String       @unique
+  createdAt                     DateTime     @default(now())
+  clerkUserId                   String?      @unique
+  name                          String       @default("")
+  middleName                    String?
+  surname                       String?
+  isManagingDirector            Boolean      @default(false)
+  reportCardsAsManagingDirector ReportCard[]
 }
 
 model Student {
   id          String   @id
   username    String   @unique
   name        String
-  surname     String
+  middleName  String?
+  surname     String?
   email       String?  @unique
   phone       String?  @unique
   address     String
@@ -43,7 +47,8 @@ model Teacher {
   id          String   @id
   username    String   @unique
   name        String
-  surname     String
+  middleName  String?
+  surname     String?
   email       String?  @unique
   phone       String?  @unique
   address     String
@@ -55,17 +60,19 @@ model Teacher {
   clerkUserId String?  @unique
   isActive    Boolean  @default(true)
 
-  classes           Class[]
-  lessons           Lesson[]
-  sectionSupervisor SectionSupervisor?
-  subjects          Subject[]          @relation("SubjectToTeacher")
+  classes            Class[]
+  lessons            Lesson[]
+  sectionSupervisor  SectionSupervisor?
+  subjects           Subject[]            @relation("SubjectToTeacher")
+  ReportCardSemester ReportCardSemester[]
 }
 
 model Parent {
   id          String    @id
   username    String    @unique
   name        String
-  surname     String
+  middleName  String?
+  surname     String?
   email       String?   @unique
   phone       String    @unique
   address     String
@@ -96,38 +103,51 @@ model AcademicYear {
   resultSubmissions ResultSubmission[]
   enrollments       StudentEnrollment[]
   reportCards       ReportCard[]
+  promotionPolicies PromotionPolicy[]
 }
 
 model ReportCard {
-  id             Int    @id @default(autoincrement())
-  studentId      String
-  academicYearId Int
+  id                        Int      @id @default(autoincrement())
+  studentId                 String
+  academicYearId            Int
+  promotedGradeId           Int?
+  detainedGradeId           Int?
+  managingDirectorId        String?
+  managingDirectorName      String?
+  managingDirectorSignature String?
+  managingDirectorDate      DateTime @default(now())
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
 
-  conductSemester1 String?
-  conductSemester2 String?
-
-  commentSemester1 String?
-  commentSemester2 String?
-
-  parentNameSemester1 String?
-  parentNameSemester2 String?
-
-  promotedGradeId Int?
-  detainedGradeId Int?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  student      Student      @relation(fields: [studentId], references: [id])
-  academicYear AcademicYear @relation(fields: [academicYearId], references: [id])
-
-  promotedGrade Grade? @relation("ReportCardPromotedGrade", fields: [promotedGradeId], references: [id])
-
-  detainedGrade Grade? @relation("ReportCardDetainedGrade", fields: [detainedGradeId], references: [id])
-
-  basicSkills ReportCardBasicSkill[]
+  student          Student                @relation(fields: [studentId], references: [id])
+  academicYear     AcademicYear           @relation(fields: [academicYearId], references: [id])
+  managingDirector Admin?                 @relation(fields: [managingDirectorId], references: [id], onDelete: SetNull)
+  promotedGrade    Grade?                 @relation("ReportCardPromotedGrade", fields: [promotedGradeId], references: [id])
+  detainedGrade    Grade?                 @relation("ReportCardDetainedGrade", fields: [detainedGradeId], references: [id])
+  semesters        ReportCardSemester[]
+  basicSkills      ReportCardBasicSkill[]
 
   @@unique([studentId, academicYearId])
+}
+
+model ReportCardSemester {
+  id Int @id @default(autoincrement())
+
+  reportCardId Int
+  semester     Semester
+
+  homeroomTeacherId        String?
+  homeroomTeacherName      String?
+  homeroomTeacherSignature String?
+  parentName               String?
+
+  comment String?
+  conduct String?
+
+  reportCard      ReportCard @relation(fields: [reportCardId], references: [id], onDelete: Cascade)
+  homeroomTeacher Teacher?   @relation(fields: [homeroomTeacherId], references: [id])
+
+  @@unique([reportCardId, semester])
 }
 
 model ReportCardBasicSkill {
@@ -156,6 +176,18 @@ model ReportCardBasicSkill {
   reportCard ReportCard @relation(fields: [reportCardId], references: [id], onDelete: Cascade)
 
   @@unique([reportCardId, semester])
+}
+
+model PromotionPolicy {
+  id                      Int          @id @default(autoincrement())
+  academicYearId          Int
+  section                 GradeSection
+  promotionMinimumAverage Float
+  detentionMaximumAverage Float
+
+  academicYear AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
+
+  @@unique([academicYearId, section])
 }
 
 model StudentEnrollment {

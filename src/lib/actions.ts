@@ -890,9 +890,9 @@ export const updateReportCard = async (
   )?.role;
 
   try {
-    // -----------------------------------------------------
-    // 1. Authentication
-    // -----------------------------------------------------
+    // ---------------------------------------------------------
+    // AUTHENTICATION
+    // ---------------------------------------------------------
 
     if (!userId) {
       return {
@@ -901,10 +901,6 @@ export const updateReportCard = async (
       };
     }
 
-    // -----------------------------------------------------
-    // 2. Only admin and teacher can edit report cards
-    // -----------------------------------------------------
-
     if (role !== "admin" && role !== "teacher") {
       return {
         success: false,
@@ -912,9 +908,9 @@ export const updateReportCard = async (
       };
     }
 
-    // -----------------------------------------------------
-    // 3. Validate the report-card ID
-    // -----------------------------------------------------
+    // ---------------------------------------------------------
+    // VALIDATE REPORT CARD
+    // ---------------------------------------------------------
 
     if (!data.id || data.id < 1) {
       return {
@@ -922,10 +918,6 @@ export const updateReportCard = async (
         error: "invalid-report-card",
       };
     }
-
-    // -----------------------------------------------------
-    // 4. Find the report card
-    // -----------------------------------------------------
 
     const reportCard =
       await prisma.reportCard.findUnique({
@@ -946,12 +938,9 @@ export const updateReportCard = async (
       };
     }
 
-    // -----------------------------------------------------
-    // 5. Find the student's enrollment
-    //
-    // The student's class comes from StudentEnrollment.
-    // We NEVER use Student.classId.
-    // -----------------------------------------------------
+    // ---------------------------------------------------------
+    // STUDENT ENROLLMENT
+    // ---------------------------------------------------------
 
     const enrollment =
       await prisma.studentEnrollment.findUnique({
@@ -980,15 +969,11 @@ export const updateReportCard = async (
       };
     }
 
-    // -----------------------------------------------------
-    // 6. Teacher authorization
-    //
-    // IMPORTANT:
-    // Report-card editing is homeroom responsibility.
-    //
-    // Therefore this is intentionally different from
-    // ResultEntry authorization, which uses Lesson.teacherId.
-    // -----------------------------------------------------
+    // ---------------------------------------------------------
+    // TEACHER AUTHORIZATION
+    // ---------------------------------------------------------
+
+    let teacherId: string | null = null;
 
     if (role === "teacher") {
       const teacher =
@@ -998,6 +983,9 @@ export const updateReportCard = async (
           },
           select: {
             id: true,
+            name: true,
+            middleName: true,
+            surname: true,
           },
         });
 
@@ -1008,6 +996,7 @@ export const updateReportCard = async (
         };
       }
 
+      // Teacher can edit only their homeroom class.
       if (
         enrollment.class.homeRoomTeacherId !==
         teacher.id
@@ -1017,134 +1006,118 @@ export const updateReportCard = async (
           error: "unauthorized",
         };
       }
+
+      teacherId = teacher.id;
     }
 
-    // -----------------------------------------------------
-    // 7. Determine the allowed promotion/detention grades
-    // -----------------------------------------------------
-
-    const currentGrade =
-      await prisma.grade.findUnique({
-        where: {
-          id: enrollment.class.gradeId,
-        },
-        select: {
-          id: true,
-          level: true,
-        },
-      });
-
-    if (!currentGrade) {
-      return {
-        success: false,
-        error: "grade-not-found",
-      };
-    }
-
-    // Promotion is ONLY the next grade.
-    const nextGrade =
-      await prisma.grade.findUnique({
-        where: {
-          level: currentGrade.level + 1,
-        },
-        select: {
-          id: true,
-          level: true,
-        },
-      });
-
-    // -----------------------------------------------------
-    // 8. Validate promotion/detention
-    // -----------------------------------------------------
-
-    if (
-      data.promotedGradeId !== undefined &&
-      data.promotedGradeId !== 0 &&
-      data.promotedGradeId !== nextGrade?.id
-    ) {
-      return {
-        success: false,
-        error: "invalid-promotion-grade",
-      };
-    }
-
-    if (
-      data.detainedGradeId !== undefined &&
-      data.detainedGradeId !== 0 &&
-      data.detainedGradeId !== currentGrade.id
-    ) {
-      return {
-        success: false,
-        error: "invalid-detention-grade",
-      };
-    }
-
-    // A student cannot simultaneously be promoted
-    // and detained.
-    if (
-      data.promotedGradeId &&
-      data.promotedGradeId > 0 &&
-      data.detainedGradeId &&
-      data.detainedGradeId > 0
-    ) {
-      return {
-        success: false,
-        error: "invalid-promotion-status",
-      };
-    }
-
-    // -----------------------------------------------------
-    // 9. Normalize empty grade selections
-    // -----------------------------------------------------
-
-    const promotedGradeId =
-      data.promotedGradeId &&
-      data.promotedGradeId > 0
-        ? data.promotedGradeId
-        : null;
-
-    const detainedGradeId =
-      data.detainedGradeId &&
-      data.detainedGradeId > 0
-        ? data.detainedGradeId
-        : null;
-
-    // -----------------------------------------------------
-    // 10. Update everything in one transaction
-    // -----------------------------------------------------
+    // ---------------------------------------------------------
+    // TRANSACTION
+    // ---------------------------------------------------------
 
     await prisma.$transaction(async (tx) => {
-      await tx.reportCard.update({
+      // -------------------------------------------------------
+      // SEMESTER 1
+      // -------------------------------------------------------
+
+      await tx.reportCardSemester.upsert({
         where: {
-          id: reportCard.id,
+          reportCardId_semester: {
+            reportCardId: reportCard.id,
+            semester: "SEMESTER1",
+          },
         },
-        data: {
-          conductSemester1:
+
+        update: {
+          conduct:
             data.conductSemester1?.trim() || null,
 
-          conductSemester2:
-            data.conductSemester2?.trim() || null,
-
-          commentSemester1:
+          comment:
             data.commentSemester1?.trim() || null,
 
-          commentSemester2:
-            data.commentSemester2?.trim() || null,
+          ...(teacherId
+            ? {
+                homeroomTeacherId: teacherId,
+                homeroomTeacherSignature:
+                  data.teacherSignatureSemester1 ||
+                  null,
+              }
+            : {}),
+        },
 
-          parentNameSemester1:
-            data.parentNameSemester1?.trim() || null,
+        create: {
+          reportCardId: reportCard.id,
+          semester: "SEMESTER1",
 
-          parentNameSemester2:
-            data.parentNameSemester2?.trim() || null,
+          conduct:
+            data.conductSemester1?.trim() || null,
 
-          promotedGradeId,
-          detainedGradeId,
+          comment:
+            data.commentSemester1?.trim() || null,
+
+          ...(teacherId
+            ? {
+                homeroomTeacherId: teacherId,
+                homeroomTeacherSignature:
+                  data.teacherSignatureSemester1 ||
+                  null,
+              }
+            : {}),
         },
       });
 
-      // ---------------------------------------------------
-      // Semester 1 Basic Skills
-      // ---------------------------------------------------
+      // -------------------------------------------------------
+      // SEMESTER 2
+      // -------------------------------------------------------
+
+      await tx.reportCardSemester.upsert({
+        where: {
+          reportCardId_semester: {
+            reportCardId: reportCard.id,
+            semester: "SEMESTER2",
+          },
+        },
+
+        update: {
+          conduct:
+            data.conductSemester2?.trim() || null,
+
+          comment:
+            data.commentSemester2?.trim() || null,
+
+          ...(teacherId
+            ? {
+                homeroomTeacherId: teacherId,
+                homeroomTeacherSignature:
+                  data.teacherSignatureSemester2 ||
+                  null,
+              }
+            : {}),
+        },
+
+        create: {
+          reportCardId: reportCard.id,
+          semester: "SEMESTER2",
+
+          conduct:
+            data.conductSemester2?.trim() || null,
+
+          comment:
+            data.commentSemester2?.trim() || null,
+
+          ...(teacherId
+            ? {
+                homeroomTeacherId: teacherId,
+                homeroomTeacherSignature:
+                  data.teacherSignatureSemester2 ||
+                  null,
+              }
+            : {}),
+        },
+      });
+
+      // -------------------------------------------------------
+      // BASIC SKILLS - SEMESTER 1
+      // -------------------------------------------------------
 
       await tx.reportCardBasicSkill.upsert({
         where: {
@@ -1153,9 +1126,11 @@ export const updateReportCard = async (
             semester: "SEMESTER1",
           },
         },
+
         update: {
           ...data.semester1Skills,
         },
+
         create: {
           reportCardId: reportCard.id,
           semester: "SEMESTER1",
@@ -1163,9 +1138,9 @@ export const updateReportCard = async (
         },
       });
 
-      // ---------------------------------------------------
-      // Semester 2 Basic Skills
-      // ---------------------------------------------------
+      // -------------------------------------------------------
+      // BASIC SKILLS - SEMESTER 2
+      // -------------------------------------------------------
 
       await tx.reportCardBasicSkill.upsert({
         where: {
@@ -1174,16 +1149,41 @@ export const updateReportCard = async (
             semester: "SEMESTER2",
           },
         },
+
         update: {
           ...data.semester2Skills,
         },
+
         create: {
           reportCardId: reportCard.id,
           semester: "SEMESTER2",
           ...data.semester2Skills,
         },
       });
+
+      // -------------------------------------------------------
+      // MANAGING DIRECTOR SIGNATURE
+      //
+      // ONLY ADMIN CAN CHANGE THIS.
+      // -------------------------------------------------------
+
+      if (role === "admin") {
+        await tx.reportCard.update({
+          where: {
+            id: reportCard.id,
+          },
+          data: {
+            managingDirectorSignature:
+              data.managingDirectorSignature ||
+              null,
+          },
+        });
+      }
     });
+
+    // ---------------------------------------------------------
+    // REFRESH
+    // ---------------------------------------------------------
 
     revalidatePath(
       `/list/report-cards/${reportCard.studentId}`
@@ -1207,7 +1207,6 @@ export const updateReportCard = async (
     };
   }
 };
-
     //-----------------------ADMIN ACTIONS-------------------
 
   //-----------------------CREATE ADMIN-------------------
@@ -1289,6 +1288,7 @@ export const createAdmin = async (
         clerkUserId: user.id,   // Clerk ID
         username: data.username,
         name: data.name,
+        middleName: data.middleName || null,
         surname: data.surname,
       },
     });
@@ -1395,6 +1395,7 @@ export const updateAdmin = async (
       data: {
         username: data.username,
         name: data.name,
+        middleName: data.middleName || null,
         surname: data.surname,
         clerkUserId: user.id,
       },
@@ -1555,6 +1556,7 @@ export const createTeacher = async (
         clerkUserId: user.id,
         username: data.username,
         name: data.name,
+        middleName: data.middleName || null,
         surname: data.surname,
         email: data.email || null,
         phone: data.phone || null,
@@ -1668,6 +1670,7 @@ export const updateTeacher = async (
       data: {
         username: data.username,
         name: data.name,
+        middleName: data.middleName || null,
         surname: data.surname,
         email: data.email || null,
         phone: data.phone || null,
@@ -1826,6 +1829,7 @@ export const createStudent = async (
         clerkUserId: user.id,
         username: data.username,
         name: data.name,
+        middleName: data.middleName || null,
         surname: data.surname,
         email: data.email || null,
         phone: data.phone || null,
@@ -1961,6 +1965,7 @@ export const updateStudent = async (
       data: {
         username: data.username,
         name: data.name,
+        middleName: data.middleName || null,
         surname: data.surname,
         email: data.email || null,
         phone: data.phone || null,
@@ -2090,6 +2095,7 @@ export const createParent = async (
         clerkUserId: user.id,
         username: data.username,
         name: data.name,
+        middleName: data.middleName || null,
         surname: data.surname,
         email: data.email || null,
         phone: data.phone,
@@ -2174,6 +2180,7 @@ export const updateParent = async (
       data: {
         username: data.username,
         name: data.name,
+        middleName: data.middleName || null,
         surname: data.surname,
         email: data.email || null,
         phone: data.phone,
@@ -2715,28 +2722,134 @@ export const saveMonthlyAttendance = async (
     }
 
     // ----------------------------------------------------------
+    // NORMALIZE + DEDUPLICATE ATTENDANCE RECORDS
+    // ----------------------------------------------------------
+    //
+    // Each student can have only ONE attendance record
+    // for a particular CALENDAR DATE.
+    //
+    // Example:
+    //
+    // STU0021 | 2026-09-07 | 00:00
+    // STU0021 | 2026-09-07 | 22:29
+    //
+    // are treated as the SAME day.
+    //
+    // We always normalize the date to:
+    //
+    // YYYY-MM-DDT00:00:00.000Z
+    //
+    // This matches the Prisma composite unique key:
+    //
+    // studentId + classId + date
+    //
+    // ----------------------------------------------------------
+
+    const uniqueAttendance = new Map<
+      string,
+      {
+        studentId: string;
+        date: Date;
+        present: boolean | null;
+      }
+    >();
+
+    for (const record of data.attendance) {
+      // --------------------------------------------------------
+      // Validate date format
+      // --------------------------------------------------------
+
+      const datePart = String(record.date);
+
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(datePart)) {
+        console.error(
+          "SAVE MONTHLY ATTENDANCE: Invalid attendance date:",
+          record.date
+        );
+
+        return {
+          success: false,
+          error: true,
+        };
+      }
+
+      // --------------------------------------------------------
+      // Normalize to UTC midnight
+      // --------------------------------------------------------
+
+      const attendanceDate = new Date(
+        `${datePart}T00:00:00.000Z`
+      );
+
+      if (Number.isNaN(attendanceDate.getTime())) {
+        console.error(
+          "SAVE MONTHLY ATTENDANCE: Invalid attendance date:",
+          record.date
+        );
+
+        return {
+          success: false,
+          error: true,
+        };
+      }
+
+      // --------------------------------------------------------
+      // EXCLUDE WEEKENDS
+      // --------------------------------------------------------
+      //
+      // Sunday = 0
+      // Saturday = 6
+      //
+      // Weekend attendance must never be saved.
+      //
+
+      const dayOfWeek = attendanceDate.getUTCDay();
+
+      if (dayOfWeek === 0 || dayOfWeek === 6) {
+        console.log(
+          "SAVE MONTHLY ATTENDANCE: Weekend skipped:",
+          {
+            studentId: record.studentId,
+            date: datePart,
+            dayOfWeek,
+          }
+        );
+
+        continue;
+      }
+
+      // --------------------------------------------------------
+      // CREATE UNIQUE CALENDAR-DAY KEY
+      // --------------------------------------------------------
+
+      const key =
+        `${record.studentId}_${data.classId}_${datePart}`;
+
+      // --------------------------------------------------------
+      // Keep one record per student/class/date.
+      //
+      // If the same date appears more than once in the submitted
+      // data, the last submitted value is retained.
+      // --------------------------------------------------------
+
+      uniqueAttendance.set(key, {
+        studentId: record.studentId,
+        date: attendanceDate,
+        present: record.present,
+      });
+    }
+
+    console.log(
+      "NORMALIZED UNIQUE ATTENDANCE RECORDS:",
+      uniqueAttendance.size
+    );
+
+    // ----------------------------------------------------------
     // SAVE ATTENDANCE
     // ----------------------------------------------------------
 
-    console.log(
-      "CHECKING STUDENT1 AUGUST 3:",
-      data.attendance.filter(
-        (record) =>
-          record.studentId === "student1" &&
-          record.date === "2026-08-03"
-      )
-    );
-
     await prisma.$transaction(
-      data.attendance.map((record) => {
-        // ------------------------------------------------------
-        // YYYY-MM-DD → UTC date
-        // ------------------------------------------------------
-
-        const attendanceDate = new Date(
-          `${record.date}T00:00:00.000Z`
-        );
-
+      Array.from(uniqueAttendance.values()).map((record) => {
         // ------------------------------------------------------
         // NULL = NOT RECORDED
         // ------------------------------------------------------
@@ -2746,7 +2859,7 @@ export const saveMonthlyAttendance = async (
             where: {
               studentId: record.studentId,
               classId: data.classId,
-              date: attendanceDate,
+              date: record.date,
             },
           });
         }
@@ -2761,7 +2874,7 @@ export const saveMonthlyAttendance = async (
             studentId_classId_date: {
               studentId: record.studentId,
               classId: data.classId,
-              date: attendanceDate,
+              date: record.date,
             },
           },
           update: {
@@ -2770,7 +2883,7 @@ export const saveMonthlyAttendance = async (
           create: {
             studentId: record.studentId,
             classId: data.classId,
-            date: attendanceDate,
+            date: record.date,
             present: record.present,
           },
         });

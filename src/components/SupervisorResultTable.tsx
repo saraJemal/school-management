@@ -11,7 +11,7 @@ type StudentResult = {
   studentId: string;
   rollNumber: number | null;
   name: string;
-  surname: string;
+  surname: string | null;
   scores: Record<string, number | null>;
 };
 

@@ -92,6 +92,13 @@ const ParentForm = ({
           error={errors?.name}
         />
         <InputField
+          label="Middle Name"
+          name="middleName"
+          defaultValue={data?.middleName ?? ""}
+          register={register}
+          error={errors?.middleName}
+        />
+        <InputField
           label="Last Name"
           name="surname"
           defaultValue={data?.surname}

@@ -7,7 +7,6 @@ import { prisma } from "@/lib/prisma";
 import { ITEM_PER_PAGE } from "@/lib/settings";
 import { auth } from "@clerk/nextjs/server";
 
-
 const columns = [
   {
     header: "Roll No.",
@@ -53,7 +52,7 @@ const ReportCardTable = ({
         </td>
 
         <td className="p-3">
-          {student.name} {student.surname}
+          {student.name} {student.surname ?? ""}
         </td>
 
         <td className="p-3">
@@ -93,7 +92,11 @@ const ReportCardsPage = async ({
     return null;
   }
 
-  const role = (sessionClaims?.metadata as { role?: string })?.role;
+  const role = (
+    sessionClaims?.metadata as {
+      role?: string;
+    }
+  )?.role;
 
   if (
     role !== "admin" &&
@@ -110,21 +113,25 @@ const ReportCardsPage = async ({
    * ------------------------------------------------------------
    */
 
-  const selectedAcademicYearId = searchParams.academicYearId
-    ? Number(searchParams.academicYearId)
-    : undefined;
+  const selectedAcademicYearId =
+    searchParams.academicYearId
+      ? Number(searchParams.academicYearId)
+      : undefined;
 
-  const selectedGradeId = searchParams.gradeId
-    ? Number(searchParams.gradeId)
-    : undefined;
+  const selectedGradeId =
+    searchParams.gradeId
+      ? Number(searchParams.gradeId)
+      : undefined;
 
-  const selectedClassId = searchParams.classId
-    ? Number(searchParams.classId)
-    : undefined;
+  const selectedClassId =
+    searchParams.classId
+      ? Number(searchParams.classId)
+      : undefined;
 
-  const page = searchParams.page
-    ? Number(searchParams.page)
-    : 1;
+  const page =
+    searchParams.page
+      ? Number(searchParams.page)
+      : 1;
 
   /*
    * ------------------------------------------------------------
@@ -132,15 +139,16 @@ const ReportCardsPage = async ({
    * ------------------------------------------------------------
    */
 
-  const academicYears = await prisma.academicYear.findMany({
-    orderBy: {
-      startDate: "desc",
-    },
-    select: {
-      id: true,
-      name: true,
-    },
-  });
+  const academicYears =
+    await prisma.academicYear.findMany({
+      orderBy: {
+        startDate: "desc",
+      },
+      select: {
+        id: true,
+        name: true,
+      },
+    });
 
   /*
    * ------------------------------------------------------------
@@ -148,49 +156,111 @@ const ReportCardsPage = async ({
    * ------------------------------------------------------------
    */
 
-  const grades = await prisma.grade.findMany({
-    orderBy: {
-      level: "asc",
-    },
-    select: {
-      id: true,
-      level: true,
-      name: true,
-    },
-  });
+  const grades =
+    await prisma.grade.findMany({
+      orderBy: {
+        level: "asc",
+      },
+      select: {
+        id: true,
+        level: true,
+        name: true,
+      },
+    });
+
+  /*
+   * ------------------------------------------------------------
+   * TEACHER AUTHORIZATION
+   * ------------------------------------------------------------
+   *
+   * IMPORTANT:
+   *
+   * Clerk userId is NOT the database Teacher ID.
+   *
+   * Clerk userId
+   *      ↓
+   * Teacher.clerkUserId
+   *      ↓
+   * Teacher.id
+   *
+   * For teachers, this DB teacher ID is used to restrict
+   * both the class filter and the student query.
+   */
+
+  let teacherId: string | undefined;
+
+  if (role === "teacher") {
+    const teacher =
+      await prisma.teacher.findUnique({
+        where: {
+          clerkUserId: userId,
+        },
+        select: {
+          id: true,
+        },
+      });
+
+    if (!teacher) {
+      return null;
+    }
+
+    teacherId = teacher.id;
+  }
 
   /*
    * ------------------------------------------------------------
    * CLASSES
    * ------------------------------------------------------------
    *
-   * We load the classes so the client component can filter them
-   * by the selected grade.
+   * ADMIN:
+   *   Can see all classes.
+   *
+   * TEACHER:
+   *   Can see ONLY classes where the logged-in teacher is the
+   *   homeroom teacher.
+   *
+   * This restriction is applied to the filter itself, so the
+   * teacher cannot even select another teacher's class from the
+   * normal UI.
+   *
+   * The student query below repeats the authorization check
+   * server-side as a second layer of protection against manually
+   * changing classId in the URL.
    */
 
-  const classes = await prisma.class.findMany({
-    orderBy: {
-      name: "asc",
-    },
-    select: {
-      id: true,
-      name: true,
-      gradeId: true,
-    },
-  });
+  const classes =
+    await prisma.class.findMany({
+      where:
+        role === "teacher"
+          ? {
+              homeRoomTeacherId:
+                teacherId,
+            }
+          : undefined,
+
+      orderBy: {
+        name: "asc",
+      },
+
+      select: {
+        id: true,
+        name: true,
+        gradeId: true,
+      },
+    });
 
   /*
    * ------------------------------------------------------------
    * STUDENTS
    * ------------------------------------------------------------
    *
-   * IMPORTANT:
-   * Students are loaded ONLY after a class has been selected.
-   *
    * StudentEnrollment is the authoritative source for:
+   *
    * - academic year
    * - class
    * - roll number
+   *
+   * No Student.classId or Student.gradeId is used.
    */
 
   let students: any[] = [];
@@ -202,39 +272,93 @@ const ReportCardsPage = async ({
     selectedClassId
   ) {
     /*
-     * Make sure the selected class actually belongs to the
-     * selected grade.
+     * ----------------------------------------------------------
+     * VERIFY SELECTED CLASS
+     * ----------------------------------------------------------
+     *
+     * The selected class must:
+     *
+     * 1. Belong to the selected grade.
+     * 2. Exist.
+     * 3. For teachers, belong to the logged-in teacher as
+     *    homeroom teacher.
+     *
+     * This protects against manually changing classId in the URL.
      */
-    const selectedClass = await prisma.class.findFirst({
-      where: {
-        id: selectedClassId,
-        gradeId: selectedGradeId,
-      },
-      select: {
-        id: true,
-      },
-    });
+
+    const selectedClass =
+      await prisma.class.findFirst({
+        where: {
+          id: selectedClassId,
+          gradeId: selectedGradeId,
+
+          ...(role === "teacher"
+            ? {
+                homeRoomTeacherId:
+                  teacherId,
+              }
+            : {}),
+        },
+
+        select: {
+          id: true,
+          name: true,
+        },
+      });
+
+    /*
+     * If the selected class does not belong to the teacher,
+     * return an empty result.
+     *
+     * Therefore changing:
+     *
+     * ?classId=...
+     *
+     * manually cannot expose another teacher's students.
+     */
 
     if (selectedClass) {
       const where = {
-        academicYearId: selectedAcademicYearId,
+        academicYearId:
+          selectedAcademicYearId,
+
         classId: selectedClassId,
       };
 
-      count = await prisma.studentEnrollment.count({
-        where,
-      });
+      /*
+       * --------------------------------------------------------
+       * COUNT
+       * --------------------------------------------------------
+       */
+
+      count =
+        await prisma.studentEnrollment.count({
+          where,
+        });
+
+      /*
+       * --------------------------------------------------------
+       * ENROLLMENTS
+       * --------------------------------------------------------
+       */
 
       const enrollments =
         await prisma.studentEnrollment.findMany({
           where,
+
           orderBy: {
             rollNumber: "asc",
           },
-          skip: (page - 1) * ITEM_PER_PAGE,
+
+          skip:
+            (page - 1) *
+            ITEM_PER_PAGE,
+
           take: ITEM_PER_PAGE,
+
           select: {
             rollNumber: true,
+
             student: {
               select: {
                 id: true,
@@ -242,10 +366,12 @@ const ReportCardsPage = async ({
                 surname: true,
               },
             },
+
             class: {
               select: {
                 id: true,
                 name: true,
+
                 grade: {
                   select: {
                     id: true,
@@ -257,18 +383,35 @@ const ReportCardsPage = async ({
           },
         });
 
-      students = enrollments.map((enrollment) => ({
-        id: enrollment.student.id,
-        name: enrollment.student.name,
-        surname: enrollment.student.surname,
+      /*
+       * --------------------------------------------------------
+       * TABLE DATA
+       * --------------------------------------------------------
+       */
 
-        enrollments: [
-          {
-            rollNumber: enrollment.rollNumber,
-            class: enrollment.class,
-          },
-        ],
-      }));
+      students =
+        enrollments.map(
+          (enrollment) => ({
+            id:
+              enrollment.student.id,
+
+            name:
+              enrollment.student.name,
+
+            surname:
+              enrollment.student.surname,
+
+            enrollments: [
+              {
+                rollNumber:
+                  enrollment.rollNumber,
+
+                class:
+                  enrollment.class,
+              },
+            ],
+          })
+        );
     }
   }
 
@@ -280,64 +423,96 @@ const ReportCardsPage = async ({
 
   return (
     <div className="bg-white p-4 rounded-md flex-1 m-4 mt-0">
+
       {/* TOP */}
+
       <div className="flex items-center justify-between">
+
         <h1 className="hidden md:block text-lg font-semibold">
-          Report Cards
+          Student Report Cards
         </h1>
 
         <div className="flex flex-col md:flex-row items-center gap-4 w-full md:w-auto">
           <TableSearch />
         </div>
+
       </div>
 
       {/* FILTERS */}
+
       <div className="mt-6">
+
         <ReportCardFilters
           academicYears={academicYears}
           grades={grades}
           classes={classes}
-          selectedAcademicYearId={selectedAcademicYearId}
-          selectedGradeId={selectedGradeId}
-          selectedClassId={selectedClassId}
+          selectedAcademicYearId={
+            selectedAcademicYearId
+          }
+          selectedGradeId={
+            selectedGradeId
+          }
+          selectedClassId={
+            selectedClassId
+          }
         />
+
       </div>
 
       {/* STUDENT LIST */}
+
       {selectedClassId &&
       selectedGradeId &&
       selectedAcademicYearId ? (
         <>
+
           <div className="mt-6">
+
             {students.length > 0 ? (
               <ReportCardTable
                 students={students}
-                academicYearId={selectedAcademicYearId}
+                academicYearId={
+                  selectedAcademicYearId
+                }
               />
             ) : (
               <div className="flex items-center justify-center rounded-md border border-dashed border-gray-300 py-12 text-sm text-gray-500">
-                No students are enrolled in the selected class
-                for this academic year.
+
+                {role === "teacher"
+                  ? "No students are enrolled in this class, or you are not the homeroom teacher for this class."
+                  : "No students are enrolled in the selected class for this academic year."}
+
               </div>
             )}
+
           </div>
 
-          {count > ITEM_PER_PAGE && (
+          {count >
+            ITEM_PER_PAGE && (
             <Pagination
               page={page}
               count={count}
             />
           )}
+
         </>
+
       ) : (
+
         /*
          * Empty state before a class is selected.
          */
+
         <div className="mt-8 flex items-center justify-center rounded-md border border-dashed border-gray-300 py-16 text-sm text-gray-500">
-          Please select an academic year, grade, and class to
-          view students.
+
+          Please select an academic year,
+          grade, and class to view
+          students.
+
         </div>
+
       )}
+
     </div>
   );
 };

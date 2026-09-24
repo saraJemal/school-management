@@ -31,7 +31,7 @@ const FormContainer = async ({
 }: FormContainerProps) => {
   let relatedData = {};
 
-  const { userId, sessionClaims } = auth();
+  const { userId, sessionClaims } = await auth();
   const role = (sessionClaims?.metadata as { role?: string })?.role;
   const currentUserId = userId;
 
@@ -387,6 +387,8 @@ const FormContainer = async ({
 
         relatedData = {
           grades: reportCardGrades,
+          role,
+          currentUserId,
         };
 
         break;

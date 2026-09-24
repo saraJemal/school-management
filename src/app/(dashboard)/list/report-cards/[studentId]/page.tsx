@@ -6,6 +6,8 @@ import {
   roundResult,
 } from "@/lib/resultCalculation";
 import PrintButton from "@/components/PrintButton";
+import FormContainer from "@/components/FormContainer";
+import { calculateStudentSemesterAttendance } from "@/lib/attendance";
 
 type PageProps = {
   params: {
@@ -24,12 +26,39 @@ type SubjectSemesterResult = {
   annualAverage: number | null;
 };
 
-type StudentRankData = {
+type SemesterRankData = {
   studentId: string;
   average: number;
 };
 
-const calculateStudentAverage = (
+const calculateSemesterAverage = (
+  subjectResults: SubjectSemesterResult[],
+  semester: "SEMESTER1" | "SEMESTER2"
+) => {
+  const values = subjectResults
+    .map((subject) =>
+      semester === "SEMESTER1"
+        ? subject.semester1
+        : subject.semester2
+    )
+    .filter(
+      (value): value is number =>
+        value !== null
+    );
+
+  if (values.length === 0) {
+    return null;
+  }
+
+  return roundResult(
+    values.reduce(
+      (sum, value) => sum + value,
+      0
+    ) / values.length
+  );
+};
+
+const calculateAnnualAverage = (
   subjectResults: SubjectSemesterResult[]
 ) => {
   const annualResults = subjectResults
@@ -51,9 +80,61 @@ const calculateStudentAverage = (
   );
 };
 
-const getAge = (
-  birthday: Date
+const calculateSemesterTotal = (
+  subjectResults: SubjectSemesterResult[],
+  semester: "SEMESTER1" | "SEMESTER2"
 ) => {
+  const values = subjectResults
+    .map((subject) =>
+      semester === "SEMESTER1"
+        ? subject.semester1
+        : subject.semester2
+    )
+    .filter(
+      (value): value is number =>
+        value !== null
+    );
+
+  if (values.length === 0) {
+    return null;
+  }
+
+  return roundResult(
+    values.reduce(
+      (sum, value) => sum + value,
+      0
+    )
+  );
+};
+
+const calculateAnnualTotal = (
+  subjectResults: SubjectSemesterResult[]
+) => {
+  const semester1Total =
+    calculateSemesterTotal(
+      subjectResults,
+      "SEMESTER1"
+    );
+
+  const semester2Total =
+    calculateSemesterTotal(
+      subjectResults,
+      "SEMESTER2"
+    );
+
+  if (
+    semester1Total === null ||
+    semester2Total === null
+  ) {
+    return null;
+  }
+
+  return roundResult(
+    (semester1Total + semester2Total) / 2
+  );
+};
+
+const getAge = (birthday: Date) => {
   const today = new Date();
 
   let age =
@@ -76,20 +157,40 @@ const getAge = (
   return age;
 };
 
-const formatDate = (
-  date: Date
+const formatTeacherName = (
+  teacher: {
+    name: string;
+    middleName: string | null;
+    surname: string | null;
+  } | null
 ) => {
-  return date.toLocaleDateString(
-    "en-GB"
-  );
+  if (!teacher) {
+    return "Not recorded";
+  }
+
+  return `${teacher.name} ${
+    teacher.middleName ?? ""
+  } ${teacher.surname ?? ""}`
+    .replace(/\s+/g, " ")
+    .trim();
 };
 
-const getSemesterLabel = (
-  semester: "SEMESTER1" | "SEMESTER2"
+const formatParentName = (
+  parent: {
+    name: string;
+    middleName: string | null;
+    surname: string | null;
+  } | null
 ) => {
-  return semester === "SEMESTER1"
-    ? "Semester 1"
-    : "Semester 2";
+  if (!parent) {
+    return "Not recorded";
+  }
+
+  return `${parent.name} ${
+    parent.middleName ?? ""
+  } ${parent.surname ?? ""}`
+    .replace(/\s+/g, " ")
+    .trim();
 };
 
 const StudentReportCardPage = async ({
@@ -158,7 +259,7 @@ const StudentReportCardPage = async ({
 
   /*
    * =====================================================
-   * PAGE-LEVEL AUTHORIZATION
+   * STUDENT / PARENT AUTHORIZATION
    * =====================================================
    */
 
@@ -193,10 +294,6 @@ const StudentReportCardPage = async ({
    * =====================================================
    * STUDENT ENROLLMENT
    * =====================================================
-   *
-   * The report card uses StudentEnrollment as the
-   * source of truth for the student's class, grade,
-   * academic year and roll number.
    */
 
   const enrollment =
@@ -229,6 +326,9 @@ const StudentReportCardPage = async ({
   const gradeId =
     enrollment.class.gradeId;
 
+  const gradeSection =
+    enrollment.class.grade.section;
+
   const academicYear =
     enrollment.academicYear;
 
@@ -236,53 +336,81 @@ const StudentReportCardPage = async ({
    * =====================================================
    * TEACHER AUTHORIZATION
    * =====================================================
-   *
-   * A teacher may view the report card if they teach
-   * at least one subject in this student's class.
-   *
-   * IMPORTANT:
-   * This uses Lesson.teacherId, not
-   * homeRoomTeacherId.
    */
 
+  let currentTeacher = null;
+
   if (role === "teacher") {
-    const teacher =
+    currentTeacher =
       await prisma.teacher.findUnique({
         where: {
           clerkUserId: userId,
         },
         select: {
           id: true,
+          name: true,
+          middleName: true,
+          surname: true,
         },
       });
 
-    if (!teacher) {
+    if (!currentTeacher) {
       redirect("/unauthorized");
     }
 
-    const assignedLesson =
-      await prisma.lesson.findFirst({
-        where: {
-          classId,
-          teacherId: teacher.id,
-        },
-        select: {
-          id: true,
-        },
-      });
-
-    if (!assignedLesson) {
+    if (
+      enrollment.class.homeRoomTeacherId !==
+      currentTeacher.id
+    ) {
       redirect("/unauthorized");
     }
   }
 
   /*
    * =====================================================
+   * SUBJECTS
+   * =====================================================
+   */
+
+  const subjectSections =
+    await prisma.subjectSection.findMany({
+      where: {
+        section: gradeSection,
+      },
+      select: {
+        subjectId: true,
+        subject: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+      orderBy: {
+        subject: {
+          name: "asc",
+        },
+      },
+    });
+
+  const subjects = Array.from(
+    new Map(
+      subjectSections.map(
+        (item) => [
+          item.subject.id,
+          {
+            id: item.subject.id,
+            name: item.subject.name,
+          },
+        ]
+      )
+    ).values()
+  );
+
+  /*
+   * =====================================================
    * RESULT SUBMISSIONS
    * =====================================================
-   *
-   * Only SUBMITTED results are displayed on the
-   * official report card.
    */
 
   const submissions =
@@ -310,45 +438,8 @@ const StudentReportCardPage = async ({
 
   /*
    * =====================================================
-   * SUBJECTS
-   * =====================================================
-   *
-   * A class does not have a direct Subject relation.
-   * Subjects are therefore obtained from Lessons.
-   */
-
-  const lessons =
-    await prisma.lesson.findMany({
-      where: {
-        classId,
-      },
-      select: {
-        subjectId: true,
-        subject: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-      },
-      distinct: ["subjectId"],
-      orderBy: {
-        subject: {
-          name: "asc",
-        },
-      },
-    });
-
-  const subjects = lessons.map(
-    (lesson) => lesson.subject
-  );
-
-  /*
-   * =====================================================
    * ALL ENROLLED STUDENTS
    * =====================================================
-   *
-   * Used for class size and ranking.
    */
 
   const classEnrollments =
@@ -373,233 +464,470 @@ const StudentReportCardPage = async ({
       (item) => item.studentId
     );
 
+  const classSize =
+    classEnrollments.length;
+
+  /*
+   * =====================================================
+   * ASSESSMENT DEFINITIONS
+   * =====================================================
+   */
+
+  const assessmentDefinitions =
+    await prisma.assessment.findMany({
+      where: {
+        academicYearId,
+        gradeId,
+      },
+      select: {
+        subjectId: true,
+        semester: true,
+        type: true,
+        category: true,
+        maxScore: true,
+        weight: true,
+      },
+    });
+
+  /*
+   * =====================================================
+   * ALL STUDENT ASSESSMENTS
+   * =====================================================
+   */
+
+  const allStudentAssessments =
+    await prisma.studentAssessment.findMany({
+      where: {
+        studentId: {
+          in: enrolledStudentIds,
+        },
+        assessment: {
+          academicYearId,
+          gradeId,
+        },
+      },
+      select: {
+        studentId: true,
+        score: true,
+        assessment: {
+          select: {
+            subjectId: true,
+            semester: true,
+            type: true,
+          },
+        },
+      },
+    });
+
+  const studentAssessmentMap =
+    new Map<
+      string,
+      number | null
+    >();
+
+  for (const result of allStudentAssessments) {
+    const key =
+      `${result.studentId}-` +
+      `${result.assessment.subjectId}-` +
+      `${result.assessment.semester}-` +
+      `${result.assessment.type}`;
+
+    studentAssessmentMap.set(
+      key,
+      result.score
+    );
+  }
+
   /*
    * =====================================================
    * BUILD SUBJECT RESULTS
    * =====================================================
    */
 
-  const subjectResults: SubjectSemesterResult[] =
+  const getStudentSubjectResults =
+    (
+      studentId: string
+    ): SubjectSemesterResult[] => {
+      return subjects.map(
+        (subject) => {
+          let semester1:
+            | number
+            | null = null;
+
+          let semester2:
+            | number
+            | null = null;
+
+          /*
+           * SEMESTER 1
+           */
+
+          if (
+            submittedResultKeys.has(
+              `${subject.id}-SEMESTER1`
+            )
+          ) {
+            const assessments =
+              assessmentDefinitions.filter(
+                (assessment) =>
+                  assessment.subjectId ===
+                    subject.id &&
+                  assessment.semester ===
+                    "SEMESTER1"
+              );
+
+            const scores: Record<
+              string,
+              number | null
+            > = {};
+
+            for (const assessment of assessments) {
+              const key =
+                `${studentId}-` +
+                `${subject.id}-SEMESTER1-` +
+                `${assessment.type}`;
+
+              scores[
+                assessment.type
+              ] =
+                studentAssessmentMap.has(key)
+                  ? studentAssessmentMap.get(
+                      key
+                    ) ?? null
+                  : null;
+            }
+
+            semester1 =
+              roundResult(
+                calculateFinalResult(
+                  assessments,
+                  scores
+                )
+              );
+          }
+
+          /*
+           * SEMESTER 2
+           */
+
+          if (
+            submittedResultKeys.has(
+              `${subject.id}-SEMESTER2`
+            )
+          ) {
+            const assessments =
+              assessmentDefinitions.filter(
+                (assessment) =>
+                  assessment.subjectId ===
+                    subject.id &&
+                  assessment.semester ===
+                    "SEMESTER2"
+              );
+
+            const scores: Record<
+              string,
+              number | null
+            > = {};
+
+            for (const assessment of assessments) {
+              const key =
+                `${studentId}-` +
+                `${subject.id}-SEMESTER2-` +
+                `${assessment.type}`;
+
+              scores[
+                assessment.type
+              ] =
+                studentAssessmentMap.has(key)
+                  ? studentAssessmentMap.get(
+                      key
+                    ) ?? null
+                  : null;
+            }
+
+            semester2 =
+              roundResult(
+                calculateFinalResult(
+                  assessments,
+                  scores
+                )
+              );
+          }
+
+          /*
+           * ANNUAL SUBJECT RESULT
+           */
+
+          let annualAverage:
+            | number
+            | null = null;
+
+          if (
+            semester1 !== null &&
+            semester2 !== null
+          ) {
+            annualAverage =
+              roundResult(
+                (semester1 +
+                  semester2) /
+                  2
+              );
+          }
+
+          return {
+            subjectId: subject.id,
+            subjectName:
+              subject.name,
+            semester1,
+            semester2,
+            annualAverage,
+          };
+        }
+      );
+    };
+
+  /*
+   * =====================================================
+   * CURRENT STUDENT RESULTS
+   * =====================================================
+   */
+
+  const subjectResults =
+    getStudentSubjectResults(
+      student.id
+    );
+
+  /*
+   * =====================================================
+   * CURRENT STUDENT SEMESTER AVERAGES
+   * =====================================================
+   */
+
+  const semester1Average =
+    calculateSemesterAverage(
+      subjectResults,
+      "SEMESTER1"
+    );
+
+  const semester2Average =
+    calculateSemesterAverage(
+      subjectResults,
+      "SEMESTER2"
+    );
+
+  const studentAverage =
+    calculateAnnualAverage(
+      subjectResults
+    );
+
+  /*
+   * =====================================================
+   * CURRENT STUDENT TOTALS
+   * =====================================================
+   */
+
+  const semester1Total =
+    calculateSemesterTotal(
+      subjectResults,
+      "SEMESTER1"
+    );
+
+  const semester2Total =
+    calculateSemesterTotal(
+      subjectResults,
+      "SEMESTER2"
+    );
+
+  const annualTotal =
+    calculateAnnualTotal(
+      subjectResults
+    );
+
+  /*
+   * =====================================================
+   * CLASS RANKING
+   * =====================================================
+   */
+
+  const semester1RankingData: SemesterRankData[] =
     [];
 
-  for (const subject of subjects) {
-    let semester1: number | null =
-      null;
+  const semester2RankingData: SemesterRankData[] =
+    [];
 
-    let semester2: number | null =
-      null;
+  const annualRankingData: SemesterRankData[] =
+    [];
 
-    /*
-     * ---------------------------------------------------
-     * SEMESTER 1
-     * ---------------------------------------------------
-     */
+  for (
+    const enrolledStudentId of enrolledStudentIds
+  ) {
+    const rankingSubjectResults =
+      getStudentSubjectResults(
+        enrolledStudentId
+      );
 
-    if (
-      submittedResultKeys.has(
-        `${subject.id}-SEMESTER1`
-      )
-    ) {
-      const assessments =
-        await prisma.assessment.findMany({
-          where: {
-            academicYearId,
-            gradeId,
-            subjectId: subject.id,
-            semester: "SEMESTER1",
-          },
-          select: {
-            type: true,
-            category: true,
-            maxScore: true,
-            weight: true,
-          },
-        });
+    const rankingSemester1Average =
+      calculateSemesterAverage(
+        rankingSubjectResults,
+        "SEMESTER1"
+      );
 
-      const studentAssessments =
-        await prisma.studentAssessment.findMany(
-          {
-            where: {
-              studentId: student.id,
-              assessment: {
-                academicYearId,
-                gradeId,
-                subjectId: subject.id,
-                semester: "SEMESTER1",
-              },
-            },
-            select: {
-              score: true,
-              assessment: {
-                select: {
-                  type: true,
-                },
-              },
-            },
-          }
-        );
+    const rankingSemester2Average =
+      calculateSemesterAverage(
+        rankingSubjectResults,
+        "SEMESTER2"
+      );
 
-      const scores: Record<
-        string,
-        number | null
-      > = {};
-
-      for (
-        const assessment
-        of assessments
-      ) {
-        scores[
-          assessment.type
-        ] = null;
-      }
-
-      for (
-        const result
-        of studentAssessments
-      ) {
-        scores[
-          result.assessment.type
-        ] = result.score;
-      }
-
-      semester1 =
-        roundResult(
-          calculateFinalResult(
-            assessments,
-            scores
-          )
-        );
-    }
-
-    /*
-     * ---------------------------------------------------
-     * SEMESTER 2
-     * ---------------------------------------------------
-     */
+    const rankingAnnualAverage =
+      calculateAnnualAverage(
+        rankingSubjectResults
+      );
 
     if (
-      submittedResultKeys.has(
-        `${subject.id}-SEMESTER2`
-      )
+      rankingSemester1Average !==
+      null
     ) {
-      const assessments =
-        await prisma.assessment.findMany({
-          where: {
-            academicYearId,
-            gradeId,
-            subjectId: subject.id,
-            semester: "SEMESTER2",
-          },
-          select: {
-            type: true,
-            category: true,
-            maxScore: true,
-            weight: true,
-          },
-        });
-
-      const studentAssessments =
-        await prisma.studentAssessment.findMany(
-          {
-            where: {
-              studentId: student.id,
-              assessment: {
-                academicYearId,
-                gradeId,
-                subjectId: subject.id,
-                semester: "SEMESTER2",
-              },
-            },
-            select: {
-              score: true,
-              assessment: {
-                select: {
-                  type: true,
-                },
-              },
-            },
-          }
-        );
-
-      const scores: Record<
-        string,
-        number | null
-      > = {};
-
-      for (
-        const assessment
-        of assessments
-      ) {
-        scores[
-          assessment.type
-        ] = null;
-      }
-
-      for (
-        const result
-        of studentAssessments
-      ) {
-        scores[
-          result.assessment.type
-        ] = result.score;
-      }
-
-      semester2 =
-        roundResult(
-          calculateFinalResult(
-            assessments,
-            scores
-          )
-        );
+      semester1RankingData.push({
+        studentId:
+          enrolledStudentId,
+        average:
+          rankingSemester1Average,
+      });
     }
-
-    /*
-     * ---------------------------------------------------
-     * ANNUAL SUBJECT AVERAGE
-     * ---------------------------------------------------
-     */
-
-    let annualAverage:
-      | number
-      | null = null;
 
     if (
-      semester1 !== null &&
-      semester2 !== null
+      rankingSemester2Average !==
+      null
     ) {
-      annualAverage =
-        roundResult(
-          (semester1 +
-            semester2) /
-            2
-        );
-    } else if (
-      semester1 !== null
-    ) {
-      annualAverage =
-        semester1;
-    } else if (
-      semester2 !== null
-    ) {
-      annualAverage =
-        semester2;
+      semester2RankingData.push({
+        studentId:
+          enrolledStudentId,
+        average:
+          rankingSemester2Average,
+      });
     }
 
-    subjectResults.push({
-      subjectId: subject.id,
-      subjectName:
-        subject.name,
-      semester1,
-      semester2,
-      annualAverage,
-    });
+    if (
+      rankingAnnualAverage !==
+      null
+    ) {
+      annualRankingData.push({
+        studentId:
+          enrolledStudentId,
+        average:
+          rankingAnnualAverage,
+      });
+    }
   }
 
+  const sortRanking = (
+    data: SemesterRankData[]
+  ) => {
+    data.sort(
+      (a, b) =>
+        b.average - a.average
+    );
+  };
+
+  sortRanking(
+    semester1RankingData
+  );
+
+  sortRanking(
+    semester2RankingData
+  );
+
+  sortRanking(
+    annualRankingData
+  );
+
+  const getRank = (
+    data: SemesterRankData[]
+  ) => {
+    const index =
+      data.findIndex(
+        (item) =>
+          item.studentId ===
+          student.id
+      );
+
+    return index >= 0
+      ? index + 1
+      : null;
+  };
+
+  const semester1Rank =
+    getRank(
+      semester1RankingData
+    );
+
+  const semester2Rank =
+    getRank(
+      semester2RankingData
+    );
+
+  const studentRank =
+    getRank(
+      annualRankingData
+    );
+
+  // ----------------------------------------------------------
+// ATTENDANCE CALCULATION
+// ----------------------------------------------------------
+// Rules:
+// 1. Only attendance inside the academic year is considered.
+// 2. Saturday and Sunday are excluded.
+// 3. Multiple records for the same calendar date count once.
+// 4. Only present === false counts as an absence.
+// 5. Annual absence = Semester 1 + Semester 2.
+// ----------------------------------------------------------
+
+    const academicStart = new Date(academicYear.startDate);
+    const academicEnd = new Date(academicYear.endDate);
+
+    const midpointTime =
+      academicStart.getTime() +
+      (academicEnd.getTime() - academicStart.getTime()) / 2;
+
+    const semesterBoundary = new Date(midpointTime);
+
+    const attendanceSummary =
+      await calculateStudentSemesterAttendance({
+        studentId: student.id,
+        classId,
+        academicYearId: academicYear.id,
+        semesterBoundary,
+      });
+
+    const semester1AbsentDays =
+      attendanceSummary.semester1.absent;
+
+    const semester2AbsentDays =
+      attendanceSummary.semester2.absent;
+
+    const annualAbsentDays =
+      attendanceSummary.annual.absent;
+
+    const absentDays = annualAbsentDays;
   /*
    * =====================================================
    * REPORT CARD
    * =====================================================
    */
+
+  await prisma.reportCard.upsert({
+    where: {
+      studentId_academicYearId: {
+        studentId: student.id,
+        academicYearId,
+      },
+    },
+    update: {},
+    create: {
+      studentId: student.id,
+      academicYearId,
+    },
+  });
 
   const reportCard =
     await prisma.reportCard.findUnique({
@@ -612,340 +940,17 @@ const StudentReportCardPage = async ({
       include: {
         promotedGrade: true,
         detainedGrade: true,
-        basicSkills: true,
-      },
-    });
-
-  /*
-   * =====================================================
-   * STUDENT AVERAGE
-   * =====================================================
-   */
-
-  const studentAverage =
-    calculateStudentAverage(
-      subjectResults
-    );
-
-  /*
-   * =====================================================
-   * CLASS RANKING
-   * =====================================================
-   *
-   * The same resultCalculation utility is used for
-   * every student in the class.
-   */
-
-  const rankingData: StudentRankData[] =
-    [];
-
-  for (
-    const enrolledStudentId of enrolledStudentIds
-  ) {
-    const rankingSubjectResults: SubjectSemesterResult[] =
-      [];
-
-    for (const subject of subjects) {
-      let semester1:
-        | number
-        | null = null;
-
-      let semester2:
-        | number
-        | null = null;
-
-      /*
-       * SEMESTER 1
-       */
-
-      if (
-        submittedResultKeys.has(
-          `${subject.id}-SEMESTER1`
-        )
-      ) {
-        const assessments =
-          await prisma.assessment.findMany({
-            where: {
-              academicYearId,
-              gradeId,
-              subjectId: subject.id,
-              semester: "SEMESTER1",
-            },
-            select: {
-              type: true,
-              category: true,
-              maxScore: true,
-              weight: true,
-            },
-          });
-
-        const results =
-          await prisma.studentAssessment.findMany(
-            {
-              where: {
-                studentId:
-                  enrolledStudentId,
-                assessment: {
-                  academicYearId,
-                  gradeId,
-                  subjectId:
-                    subject.id,
-                  semester:
-                    "SEMESTER1",
-                },
-              },
-              select: {
-                score: true,
-                assessment: {
-                  select: {
-                    type: true,
-                  },
-                },
-              },
-            }
-          );
-
-        const scores: Record<
-          string,
-          number | null
-        > = {};
-
-        for (
-          const assessment
-          of assessments
-        ) {
-          scores[
-            assessment.type
-          ] = null;
-        }
-
-        for (
-          const result of results
-        ) {
-          scores[
-            result.assessment.type
-          ] = result.score;
-        }
-
-        semester1 =
-          roundResult(
-            calculateFinalResult(
-              assessments,
-              scores
-            )
-          );
-      }
-
-      /*
-       * SEMESTER 2
-       */
-
-      if (
-        submittedResultKeys.has(
-          `${subject.id}-SEMESTER2`
-        )
-      ) {
-        const assessments =
-          await prisma.assessment.findMany({
-            where: {
-              academicYearId,
-              gradeId,
-              subjectId: subject.id,
-              semester: "SEMESTER2",
-            },
-            select: {
-              type: true,
-              category: true,
-              maxScore: true,
-              weight: true,
-            },
-          });
-
-        const results =
-          await prisma.studentAssessment.findMany(
-            {
-              where: {
-                studentId:
-                  enrolledStudentId,
-                assessment: {
-                  academicYearId,
-                  gradeId,
-                  subjectId:
-                    subject.id,
-                  semester:
-                    "SEMESTER2",
-                },
-              },
-              select: {
-                score: true,
-                assessment: {
-                  select: {
-                    type: true,
-                  },
-                },
-              },
-            }
-          );
-
-        const scores: Record<
-          string,
-          number | null
-        > = {};
-
-        for (
-          const assessment
-          of assessments
-        ) {
-          scores[
-            assessment.type
-          ] = null;
-        }
-
-        for (
-          const result of results
-        ) {
-          scores[
-            result.assessment.type
-          ] = result.score;
-        }
-
-        semester2 =
-          roundResult(
-            calculateFinalResult(
-              assessments,
-              scores
-            )
-          );
-      }
-
-      let annualAverage:
-        | number
-        | null = null;
-
-      if (
-        semester1 !== null &&
-        semester2 !== null
-      ) {
-        annualAverage =
-          roundResult(
-            (semester1 +
-              semester2) /
-              2
-          );
-      } else if (
-        semester1 !== null
-      ) {
-        annualAverage =
-          semester1;
-      } else if (
-        semester2 !== null
-      ) {
-        annualAverage =
-          semester2;
-      }
-
-      rankingSubjectResults.push({
-        subjectId: subject.id,
-        subjectName:
-          subject.name,
-        semester1,
-        semester2,
-        annualAverage,
-      });
-    }
-
-    const average =
-      calculateStudentAverage(
-        rankingSubjectResults
-      );
-
-    if (average !== null) {
-      rankingData.push({
-        studentId:
-          enrolledStudentId,
-        average,
-      });
-    }
-  }
-
-  /*
-   * Rank is based on average, descending.
-   *
-   * Students with equal averages receive the
-   * same rank.
-   */
-
-  rankingData.sort(
-    (a, b) =>
-      b.average - a.average
-  );
-
-  const studentRankIndex =
-    rankingData.findIndex(
-      (item) =>
-        item.studentId ===
-        student.id
-    );
-
-  let studentRank:
-    | number
-    | null = null;
-
-  if (
-    studentRankIndex >= 0
-  ) {
-    studentRank =
-      studentRankIndex + 1;
-  }
-
-  const classSize =
-    classEnrollments.length;
-
-  /*
-   * =====================================================
-   * ATTENDANCE
-   * =====================================================
-   *
-   * Attendance has no academicYearId.
-   * Therefore the academic year's date range is used.
-   */
-
-  const attendance =
-    await prisma.attendance.findMany({
-      where: {
-        studentId: student.id,
-        classId,
-        date: {
-          gte: academicYear.startDate,
-          lte: academicYear.endDate,
+        managingDirector: true,
+        semesters: {
+          include: {
+            homeroomTeacher: true,
+          },
+          orderBy: {
+            semester: "asc",
+          },
         },
       },
-      select: {
-        present: true,
-      },
     });
-
-  const presentDays =
-    attendance.filter(
-      (item) => item.present
-    ).length;
-
-  const absentDays =
-    attendance.filter(
-      (item) => !item.present
-    ).length;
-
-  const recordedDays =
-    attendance.length;
-
-  const attendancePercentage =
-    recordedDays > 0
-      ? roundResult(
-          (presentDays /
-            recordedDays) *
-            100
-        )
-      : 0;
 
   /*
    * =====================================================
@@ -953,15 +958,25 @@ const StudentReportCardPage = async ({
    * =====================================================
    */
 
-  const semester1Skills =
-    reportCard?.basicSkills.find(
+  const basicSkills =
+    reportCard
+      ? await prisma.reportCardBasicSkill.findMany({
+          where: {
+            reportCardId:
+              reportCard.id,
+          },
+        })
+      : [];
+
+  const semester1Report =
+    reportCard?.semesters.find(
       (item) =>
         item.semester ===
         "SEMESTER1"
     );
 
-  const semester2Skills =
-    reportCard?.basicSkills.find(
+  const semester2Report =
+    reportCard?.semesters.find(
       (item) =>
         item.semester ===
         "SEMESTER2"
@@ -969,16 +984,277 @@ const StudentReportCardPage = async ({
 
   /*
    * =====================================================
+   * ANNUAL CONDUCT
+   * =====================================================
+   */
+
+  const semester1Conduct =
+    semester1Report?.conduct ??
+    "Not recorded";
+
+  const semester2Conduct =
+    semester2Report?.conduct ??
+    "Not recorded";
+
+  let annualConduct =
+    "Not recorded";
+
+  if (
+    semester1Report?.conduct &&
+    semester2Report?.conduct
+  ) {
+    if (
+      semester1Report.conduct ===
+      semester2Report.conduct
+    ) {
+      annualConduct =
+        semester1Report.conduct;
+    } else {
+      annualConduct =
+        `${semester1Report.conduct} / ${semester2Report.conduct}`;
+    }
+  } else if (
+    semester1Report?.conduct
+  ) {
+    annualConduct =
+      semester1Report.conduct;
+  } else if (
+    semester2Report?.conduct
+  ) {
+    annualConduct =
+      semester2Report.conduct;
+  }
+
+  const semester1Skills =
+    basicSkills.find(
+      (item) =>
+        item.semester ===
+        "SEMESTER1"
+    );
+
+  const semester2Skills =
+    basicSkills.find(
+      (item) =>
+        item.semester ===
+        "SEMESTER2"
+    );
+
+  /*
+   * =====================================================
+   * AUTOMATIC PARENT NAME
+   * =====================================================
+   */
+
+  const parentDisplayName =
+    formatParentName(
+      student.parent
+        ? {
+            name:
+              student.parent.name,
+            middleName:
+              student.parent.middleName,
+            surname:
+              student.parent.surname,
+          }
+        : null
+    );
+
+  /*
+   * =====================================================
+   * SEMESTER HOMEROOM TEACHERS
+   * =====================================================
+   */
+
+  const currentHomeRoomTeacher =
+    enrollment.class.homeRoomTeacherId
+      ? await prisma.teacher.findUnique({
+          where: {
+            id:
+              enrollment.class
+                .homeRoomTeacherId,
+          },
+          select: {
+            id: true,
+            name: true,
+            middleName: true,
+            surname: true,
+          },
+        })
+      : null;
+
+  const semester1TeacherName =
+    semester1Report
+      ?.homeroomTeacherName ??
+    formatTeacherName(
+      semester1Report?.homeroomTeacher ??
+        currentHomeRoomTeacher
+    );
+
+  const semester2TeacherName =
+    semester2Report
+      ?.homeroomTeacherName ??
+    formatTeacherName(
+      semester2Report?.homeroomTeacher ??
+        currentHomeRoomTeacher
+    );
+
+  /*
+   * =====================================================
+   * MANAGING DIRECTOR
+   * =====================================================
+   */
+
+  const managingDirector =
+    reportCard?.managingDirector ??
+    (await prisma.admin.findFirst({
+      where: {
+        isManagingDirector: true,
+      },
+      select: {
+        id: true,
+        name: true,
+        middleName: true,
+        surname: true,
+      },
+    }));
+
+  const managingDirectorDisplayName =
+    reportCard?.managingDirectorName ??
+    (managingDirector
+      ? `${managingDirector.name} ${
+          managingDirector.middleName ??
+          ""
+        } ${
+          managingDirector.surname ??
+          ""
+        }`
+          .replace(/\s+/g, " ")
+          .trim()
+      : "Not recorded");
+
+  /*
+   * =====================================================
    * PROMOTION / DETENTION
    * =====================================================
    */
 
-  const promotionText =
-    reportCard?.promotedGrade
-      ? `Promoted to ${reportCard.promotedGrade.name}`
-      : reportCard?.detainedGrade
-      ? `Detained in ${reportCard.detainedGrade.name}`
-      : "Not yet recorded";
+  const promotionPolicy =
+    await prisma.promotionPolicy.findUnique({
+      where: {
+        academicYearId_section: {
+          academicYearId,
+          section: gradeSection,
+        },
+      },
+    });
+
+  const currentGrade =
+    enrollment.class.grade;
+
+  const nextGrade =
+    await prisma.grade.findUnique({
+      where: {
+        level:
+          currentGrade.level + 1,
+      },
+      select: {
+        id: true,
+        name: true,
+        level: true,
+      },
+    });
+
+  let promotionText =
+    "Decision not yet determined";
+
+  let automaticallyPromoted =
+    false;
+
+  let automaticallyDetained =
+    false;
+
+  if (
+    studentAverage !== null &&
+    promotionPolicy
+  ) {
+    if (
+      studentAverage >=
+      promotionPolicy.promotionMinimumAverage
+    ) {
+      if (nextGrade) {
+        promotionText =
+          `Promoted to ${nextGrade.name}`;
+
+        automaticallyPromoted =
+          true;
+      } else {
+        promotionText =
+          "Completed the highest grade";
+      }
+    } else if (
+      studentAverage <=
+      promotionPolicy.detentionMaximumAverage
+    ) {
+      promotionText =
+        `Detained in ${currentGrade.name}`;
+
+      automaticallyDetained =
+        true;
+    }
+  }
+
+  if (
+    !automaticallyPromoted &&
+    !automaticallyDetained &&
+    (!promotionPolicy ||
+      studentAverage === null)
+  ) {
+    if (reportCard?.promotedGrade) {
+      promotionText =
+        `Promoted to ${reportCard.promotedGrade.name}`;
+    } else if (
+      reportCard?.detainedGrade
+    ) {
+      promotionText =
+        `Detained in ${reportCard.detainedGrade.name}`;
+    }
+  }
+
+  /*
+   * =====================================================
+   * STUDENT NAME
+   * =====================================================
+   */
+
+  const studentFullName =
+    `${student.name} ${
+      student.middleName ?? ""
+    } ${student.surname ?? ""}`
+      .replace(/\s+/g, " ")
+      .trim();
+
+  /*
+   * =====================================================
+   * BASIC SKILL DEFINITIONS
+   * =====================================================
+   */
+
+  const basicSkillRows = [
+    ["Reading", "reading"],
+    ["Writing", "writing"],
+    ["Spelling", "spelling"],
+    ["Comprehension", "comprehension"],
+    ["Computation", "computation"],
+    ["Punctuality", "punctuality"],
+    ["Uniform", "uniform"],
+    ["Material Handling", "materialHandling"],
+    ["Direction", "direction"],
+    ["Completion", "completion"],
+    ["English Use", "englishUse"],
+    ["Work Ethics", "workEthics"],
+    ["Skills", "skills"],
+    ["Overall Progress", "overallProgress"],
+  ] as const;
 
   /*
    * =====================================================
@@ -987,68 +1263,494 @@ const StudentReportCardPage = async ({
    */
 
   return (
-    <div className="min-h-screen bg-gray-100 p-4 md:p-8">
+    <div className="report-card-screen min-h-screen bg-gray-100 p-4 md:p-8 print:bg-white print:p-0">
 
-      {/* PRINT BUTTON */}
+      {/* SCREEN CONTROLS */}
 
-      <div className="mx-auto mb-6 max-w-[1100px] flex justify-end print:hidden">
+      <div className="mx-auto mb-6 flex max-w-[1100px] justify-end gap-3 print:hidden">
+
         <PrintButton />
+
+        {reportCard && (
+          <FormContainer
+            table="reportCard"
+            type="update"
+            data={{
+              reportCard,
+              student,
+              enrollment,
+              academicYear,
+              semesters:
+                reportCard.semesters,
+              basicSkills,
+              subjectResults,
+              studentAverage,
+              studentRank,
+              classSize,
+
+              /*
+               * Attendance values
+               *
+               * Annual value retained for compatibility.
+               * Semester values are also provided explicitly.
+               */
+              absentDays,
+              semester1AbsentDays,
+              semester2AbsentDays,
+              annualAbsentDays,
+
+              currentGrade,
+              nextGrade,
+              promotionStatus:
+                promotionText,
+              parentDisplayName,
+              semester1TeacherName,
+              semester2TeacherName,
+              managingDirectorDisplayName,
+              role,
+            }}
+          />
+        )}
+
       </div>
 
-      <div className="mx-auto max-w-[1100px]">
+      <div className="report-print-root">
 
-        {/* =================================================
-            PAGE 1
-            SCHOOL INFORMATION
-            ================================================= */}
+        {/* =====================================================
+            PRINT SHEET 1
+            PAGE 1 + PAGE 4
+            ===================================================== */}
 
-        <section className="report-page bg-white min-h-[1000px] p-8 md:p-12">
+        <div className="report-sheet">
 
-          <div className="flex min-h-[900px] flex-col">
+          {/* =================================================
+              PAGE 1
+              ================================================= */}
 
-            {/* SCHOOL LOGO */}
+          <section className="report-page report-page-1 bg-white">
 
-            <div className="flex justify-center">
-              <div className="flex h-28 w-28 items-center justify-center rounded-full border-2 border-gray-300 text-center text-xs text-gray-400">
-                School Logo
-              </div>
-            </div>
+            <div className="report-page-inner">
 
-            <div className="mt-8 text-center">
-
-              <h1 className="text-2xl font-bold uppercase">
-                School Information
-                Management System
+              <h1 className="text-center text-2xl font-bold">
+                Student Report Card
               </h1>
 
-              <p className="mt-2 text-xl font-semibold">
-                [School Name - Afaan Oromo]
-              </p>
+              <div className="mt-5 flex items-center justify-center gap-5 border-b pb-5">
 
-              <p className="text-xl font-semibold">
-                [School Name - Amharic]
-              </p>
+                <div className="flex-shrink-0">
+                  <img
+                    src="/badirLogo.png"
+                    alt="Bedir Academy Logo"
+                    className="h-24 w-24 object-contain"
+                  />
+                </div>
 
-              <p className="text-xl font-semibold">
-                [School Name - English]
-              </p>
+                <div className="text-center">
 
-              <p className="mt-4 text-sm italic text-gray-600">
-                [School Motto]
-              </p>
+                  <p className="text-lg font-bold">
+                    Akkaadaamii Badir
+                  </p>
+
+                  <p className="text-lg font-bold">
+                    በድር አካዳሚ
+                  </p>
+
+                  <p className="text-lg font-bold">
+                    Bedir Academy
+                  </p>
+
+                  <p className="mt-2 text-sm italic text-gray-600">
+                    We Unlock the Potential!
+                  </p>
+
+                </div>
+
+              </div>
+
+              <div className="mt-6 rounded-md border p-5">
+
+                <div className="grid grid-cols-2 gap-x-8 gap-y-4">
+
+                  <div>
+                    <p className="text-[10px] text-gray-500">
+                      Academic Year
+                    </p>
+
+                    <p className="font-semibold">
+                      {academicYear.name}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-[10px] text-gray-500">
+                      Student ID
+                    </p>
+
+                    <p className="font-semibold">
+                      {student.id}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-[10px] text-gray-500">
+                      Student Name
+                    </p>
+
+                    <p className="font-semibold">
+                      {studentFullName}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-[10px] text-gray-500">
+                      Grade
+                    </p>
+
+                    <p className="font-semibold">
+                      {enrollment.class.grade.name}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-[10px] text-gray-500">
+                      Class / Section
+                    </p>
+
+                    <p className="font-semibold">
+                      {enrollment.class.name}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-[10px] text-gray-500">
+                      Roll Number
+                    </p>
+
+                    <p className="font-semibold">
+                      {enrollment.rollNumber}
+                    </p>
+                  </div>
+
+                </div>
+
+              </div>
+
+              <div className="mt-4 rounded-md border p-4">
+
+                <p className="text-[10px] text-gray-500">
+                  Parent / Guardian
+                </p>
+
+                <p className="mt-1 font-semibold">
+                  {parentDisplayName}
+                </p>
+
+              </div>
+
+              <div className="mt-auto grid grid-cols-2 gap-3 border-t pt-4 text-center text-[10px] text-gray-600">
+
+                <p>
+                  Primary Division: 0966555550
+                </p>
+
+                <p>
+                  Kindergarten Division: 01184403778
+                </p>
+
+                <p>
+                  Head Office: 0903999903
+                </p>
+
+                <p>
+                  High School Division: 01184403778
+                </p>
+
+              </div>
 
             </div>
 
-            <div className="mt-20 rounded-lg border p-8">
+          </section>
 
-              <h2 className="text-center text-xl font-bold">
-                STUDENT REPORT CARD
+          {/* =================================================
+              PAGE 4
+              ================================================= */}
+
+          <section className="report-page report-page-4 bg-white">
+
+            <div className="report-page-inner">
+
+              <h2 className="text-center text-lg font-bold">
+                BASIC SKILLS EVALUATION
               </h2>
 
-              <div className="mt-8 grid grid-cols-1 gap-5 md:grid-cols-2">
+              <p className="mt-1 text-center text-[10px] text-gray-500">
+                Academic Year: {academicYear.name}
+              </p>
+
+              <div className="mt-5 overflow-hidden rounded-md border">
+
+                <table className="w-full border-collapse text-[10px]">
+
+                  <thead>
+                    <tr className="bg-gray-100">
+
+                      <th className="border p-2 text-left">
+                        Skill
+                      </th>
+
+                      <th className="border p-2 text-center">
+                        First Semester
+                      </th>
+
+                      <th className="border p-2 text-center">
+                        Second Semester
+                      </th>
+
+                    </tr>
+                  </thead>
+
+                  <tbody>
+
+                    {basicSkillRows.map(
+                      ([label, key]) => (
+                        <tr key={key}>
+
+                          <td className="border p-2 font-medium">
+                            {label}
+                          </td>
+
+                          <td className="border p-2 text-center font-semibold">
+                            {semester1Skills?.[
+                              key as keyof typeof semester1Skills
+                            ]?.toString() ??
+                              "—"}
+                          </td>
+
+                          <td className="border p-2 text-center font-semibold">
+                            {semester2Skills?.[
+                              key as keyof typeof semester2Skills
+                            ]?.toString() ??
+                              "—"}
+                          </td>
+
+                        </tr>
+                      )
+                    )}
+
+                  </tbody>
+
+                </table>
+
+              </div>
+
+              <div className="mt-4 rounded-md border p-3">
+
+                <h3 className="text-center text-sm font-bold">
+                  Evaluation Key
+                </h3>
+
+                <table className="mt-3 w-full border-collapse text-[9px]">
+
+                  <thead>
+                    <tr className="bg-gray-100">
+
+                      <th className="border p-2 text-center">
+                        Performance
+                      </th>
+
+                      <th className="border p-2 text-center">
+                        Grade
+                      </th>
+
+                      <th className="border p-2 text-center">
+                        Percentage
+                      </th>
+
+                    </tr>
+                  </thead>
+
+                  <tbody>
+
+                    <tr>
+                      <td className="border p-2 text-center font-medium">
+                        Excellent
+                      </td>
+
+                      <td className="border p-2 text-center font-bold">
+                        A
+                      </td>
+
+                      <td className="border p-2 text-center">
+                        90 - 100
+                      </td>
+                    </tr>
+
+                    <tr>
+                      <td className="border p-2 text-center font-medium">
+                        Very Good
+                      </td>
+
+                      <td className="border p-2 text-center font-bold">
+                        B
+                      </td>
+
+                      <td className="border p-2 text-center">
+                        80 - 89
+                      </td>
+                    </tr>
+
+                    <tr>
+                      <td className="border p-2 text-center font-medium">
+                        Average
+                      </td>
+
+                      <td className="border p-2 text-center font-bold">
+                        C
+                      </td>
+
+                      <td className="border p-2 text-center">
+                        76 - 79
+                      </td>
+                    </tr>
+
+                    <tr>
+                      <td className="border p-2 text-center font-medium">
+                        Poor
+                      </td>
+
+                      <td className="border p-2 text-center font-bold">
+                        D
+                      </td>
+
+                      <td className="border p-2 text-center">
+                        50 - 75
+                      </td>
+                    </tr>
+
+                    <tr>
+                      <td className="border p-2 text-center font-medium">
+                        Fail
+                      </td>
+
+                      <td className="border p-2 text-center font-bold">
+                        E
+                      </td>
+
+                      <td className="border p-2 text-center">
+                        &lt; 50
+                      </td>
+                    </tr>
+
+                  </tbody>
+
+                </table>
+
+              </div>
+
+              <div className="mt-auto grid grid-cols-2 gap-10 pt-5">
+
+                <div className="text-center">
+                  <div className="mx-auto w-40 border-b border-gray-500" />
+
+                  <p className="mt-1 text-[10px]">
+                    Homeroom Teacher
+                  </p>
+                </div>
+
+                <div className="text-center">
+                  <div className="mx-auto w-40 border-b border-gray-500" />
+
+                  <p className="mt-1 text-[10px]">
+                    Managing Director
+                  </p>
+                </div>
+
+              </div>
+
+            </div>
+
+          </section>
+
+        </div>
+
+        {/* =====================================================
+            PRINT SHEET 2
+            PAGE 2 + PAGE 3
+            ===================================================== */}
+
+        <div className="report-sheet">
+
+          {/* =================================================
+              PAGE 2
+              ACADEMIC RESULTS
+              ================================================= */}
+
+          <section className="report-page report-page-2 bg-white">
+
+            <div className="report-page-inner">
+
+              <h2 className="text-center text-lg font-bold">
+                STUDENT ACADEMIC REPORT
+              </h2>
+
+              <div className="mt-4 grid grid-cols-4 gap-3 rounded-md border p-3 text-[10px]">
 
                 <div>
-                  <p className="text-xs text-gray-500">
+                  <p className="text-gray-500">
+                    Student ID
+                  </p>
+
+                  <p className="font-semibold">
+                    {student.id}
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-gray-500">
+                    Student Name
+                  </p>
+
+                  <p className="font-semibold">
+                    {studentFullName}
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-gray-500">
+                    Age / Sex
+                  </p>
+
+                  <p className="font-semibold">
+                    {getAge(student.birthday)}
+                    {" / "}
+                    {student.sex}
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-gray-500">
+                    Grade / Section
+                  </p>
+
+                  <p className="font-semibold">
+                    {enrollment.class.grade.name}
+                    {" / "}
+                    {enrollment.class.name}
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-gray-500">
+                    Roll Number
+                  </p>
+
+                  <p className="font-semibold">
+                    {enrollment.rollNumber}
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-gray-500">
                     Academic Year
                   </p>
 
@@ -1058,737 +1760,780 @@ const StudentReportCardPage = async ({
                 </div>
 
                 <div>
-                  <p className="text-xs text-gray-500">
-                    Grade
+                  <p className="text-gray-500">
+                    Subjects
                   </p>
 
                   <p className="font-semibold">
-                    {enrollment.class.grade.name}
-                  </p>
-                </div>
-
-                <div>
-                  <p className="text-xs text-gray-500">
-                    Class / Section
-                  </p>
-
-                  <p className="font-semibold">
-                    {enrollment.class.name}
-                  </p>
-                </div>
-
-                <div>
-                  <p className="text-xs text-gray-500">
-                    Roll Number
-                  </p>
-
-                  <p className="font-semibold">
-                    {enrollment.rollNumber}
+                    {subjectResults.length}
                   </p>
                 </div>
 
               </div>
 
-            </div>
+              {/* =================================================
+                  COMPLETE ACADEMIC TABLE
+                  ================================================= */}
 
-            <div className="mt-auto border-t pt-8 text-center text-sm text-gray-600">
+              <div className="mt-4 overflow-hidden rounded-md border">
 
-              <p>
-                Head Office:
-                {" "}
-                [Phone Number]
-              </p>
+                <table className="w-full border-collapse text-[8px]">
 
-              <p>
-                Division:
-                {" "}
-                [Division Phone Number]
-              </p>
+                  <thead>
 
-              <p className="mt-3">
-                [School Address]
-              </p>
+                    <tr className="bg-gray-100">
 
-            </div>
+                      <th
+                        rowSpan={2}
+                        className="w-[7%] border p-1.5 text-center"
+                      >
+                        No.
+                      </th>
 
-          </div>
+                      <th
+                        rowSpan={2}
+                        className="w-[33%] border p-1.5 text-left"
+                      >
+                        Subject
+                      </th>
 
-        </section>
+                      <th
+                        colSpan={3}
+                        className="border p-1.5 text-center"
+                      >
+                        Result
+                      </th>
 
-        {/* =================================================
-            PAGE 2
-            STUDENT INFORMATION + ACADEMIC RESULTS
-            ================================================= */}
+                    </tr>
 
-        <section className="report-page mt-8 bg-white min-h-[1000px] p-8 md:p-12">
+                    <tr className="bg-gray-50">
 
-          <h2 className="text-center text-xl font-bold">
-            STUDENT ACADEMIC REPORT
-          </h2>
+                      <th className="border p-1.5 text-center">
+                        Semester 1
+                      </th>
 
-          {/* STUDENT INFORMATION */}
+                      <th className="border p-1.5 text-center">
+                        Semester 2
+                      </th>
 
-          <div className="mt-8 grid grid-cols-2 gap-x-8 gap-y-4 rounded-lg border p-5 md:grid-cols-4">
+                      <th className="border p-1.5 text-center">
+                        Annual
+                      </th>
 
-            <div>
-              <p className="text-xs text-gray-500">
-                Student ID
-              </p>
-              <p className="font-semibold">
-                {student.id}
-              </p>
-            </div>
+                    </tr>
 
-            <div>
-              <p className="text-xs text-gray-500">
-                Student Name
-              </p>
-              <p className="font-semibold">
-                {student.name}{" "}
-                {student.surname}
-              </p>
-            </div>
+                  </thead>
 
-            <div>
-              <p className="text-xs text-gray-500">
-                Age
-              </p>
-              <p className="font-semibold">
-                {getAge(student.birthday)}
-              </p>
-            </div>
+                  <tbody>
 
-            <div>
-              <p className="text-xs text-gray-500">
-                Sex
-              </p>
-              <p className="font-semibold">
-                {student.sex}
-              </p>
-            </div>
+                    {/* SUBJECT ROWS */}
 
-            <div>
-              <p className="text-xs text-gray-500">
-                Grade
-              </p>
-              <p className="font-semibold">
-                {enrollment.class.grade.name}
-              </p>
-            </div>
+                    {subjectResults.map(
+                      (subject, index) => (
+                        <tr
+                          key={
+                            subject.subjectId
+                          }
+                        >
 
-            <div>
-              <p className="text-xs text-gray-500">
-                Class / Section
-              </p>
-              <p className="font-semibold">
-                {enrollment.class.name}
-              </p>
-            </div>
+                          <td className="border p-1.5 text-center">
+                            {index + 1}
+                          </td>
 
-            <div>
-              <p className="text-xs text-gray-500">
-                Roll Number
-              </p>
-              <p className="font-semibold">
-                {enrollment.rollNumber}
-              </p>
-            </div>
+                          <td className="border p-1.5 font-medium">
+                            {subject.subjectName}
+                          </td>
 
-            <div>
-              <p className="text-xs text-gray-500">
-                Academic Year
-              </p>
-              <p className="font-semibold">
-                {academicYear.name}
-              </p>
-            </div>
+                          <td className="border p-1.5 text-center">
+                            {subject.semester1 !==
+                            null
+                              ? subject.semester1.toFixed(
+                                  2
+                                )
+                              : "—"}
+                          </td>
 
-          </div>
+                          <td className="border p-1.5 text-center">
+                            {subject.semester2 !==
+                            null
+                              ? subject.semester2.toFixed(
+                                  2
+                                )
+                              : "—"}
+                          </td>
 
-          {/* RESULTS */}
+                          <td className="border p-1.5 text-center">
+                            {subject.annualAverage !==
+                            null
+                              ? subject.annualAverage.toFixed(
+                                  2
+                                )
+                              : "—"}
+                          </td>
 
-          <div className="mt-8 overflow-hidden rounded-lg border">
+                        </tr>
+                      )
+                    )}
 
-            <table className="w-full border-collapse text-sm">
+                    {subjectResults.length ===
+                      0 && (
+                      <tr>
+                        <td
+                          colSpan={5}
+                          className="border p-1.5 text-center text-gray-500"
+                        >
+                          No subjects are
+                          configured for this
+                          grade section.
+                        </td>
+                      </tr>
+                    )}
 
-              <thead>
+                    {/* TOTAL */}
 
-                <tr className="bg-gray-100">
+                    <tr>
 
-                  <th className="border p-3 text-left">
-                    No.
-                  </th>
-
-                  <th className="border p-3 text-left">
-                    Subject
-                  </th>
-
-                  <th className="border p-3 text-center">
-                    Semester 1
-                  </th>
-
-                  <th className="border p-3 text-center">
-                    Semester 2
-                  </th>
-
-                  <th className="border p-3 text-center">
-                    Annual Average
-                  </th>
-
-                </tr>
-
-              </thead>
-
-              <tbody>
-
-                {subjectResults.map(
-                  (subject, index) => (
-                    <tr
-                      key={
-                        subject.subjectId
-                      }
-                    >
-
-                      <td className="border p-3">
-                        {index + 1}
+                      <td
+                        colSpan={2}
+                        className="border p-1.5 text-left font-medium"
+                      >
+                        Total
                       </td>
 
-                      <td className="border p-3 font-medium">
-                        {subject.subjectName}
-                      </td>
-
-                      <td className="border p-3 text-center">
-                        {subject.semester1 !==
+                      <td className="border p-1.5 text-center">
+                        {semester1Total !==
                         null
-                          ? subject.semester1.toFixed(
+                          ? semester1Total.toFixed(
                               2
                             )
                           : "—"}
                       </td>
 
-                      <td className="border p-3 text-center">
-                        {subject.semester2 !==
+                      <td className="border p-1.5 text-center">
+                        {semester2Total !==
                         null
-                          ? subject.semester2.toFixed(
+                          ? semester2Total.toFixed(
                               2
                             )
                           : "—"}
                       </td>
 
-                      <td className="border p-3 text-center font-medium">
-                        {subject.annualAverage !==
+                      <td className="border p-1.5 text-center">
+                        {annualTotal !==
                         null
-                          ? subject.annualAverage.toFixed(
+                          ? annualTotal.toFixed(
                               2
                             )
                           : "—"}
                       </td>
 
                     </tr>
-                  )
-                )}
 
-                {subjectResults.length ===
-                  0 && (
-                  <tr>
-                    <td
-                      colSpan={5}
-                      className="border p-8 text-center text-gray-500"
-                    >
-                      No submitted subject
-                      results are available.
-                    </td>
-                  </tr>
-                )}
+                    {/* AVERAGE */}
 
-              </tbody>
+                    <tr>
 
-            </table>
+                      <td
+                        colSpan={2}
+                        className="border p-1.5 text-left font-medium"
+                      >
+                        Average
+                      </td>
 
-          </div>
+                      <td className="border p-1.5 text-center">
+                        {semester1Average !==
+                        null
+                          ? semester1Average.toFixed(
+                              2
+                            )
+                          : "—"}
+                      </td>
 
-          {/* SUMMARY */}
+                      <td className="border p-1.5 text-center">
+                        {semester2Average !==
+                        null
+                          ? semester2Average.toFixed(
+                              2
+                            )
+                          : "—"}
+                      </td>
 
-          <div className="mt-8 grid grid-cols-2 gap-4 md:grid-cols-4">
+                      <td className="border p-1.5 text-center">
+                        {studentAverage !==
+                        null
+                          ? studentAverage.toFixed(
+                              2
+                            )
+                          : "—"}
+                      </td>
 
-            <div className="rounded-lg border p-4 text-center">
-              <p className="text-xs text-gray-500">
-                Total Subjects
-              </p>
-              <p className="mt-1 text-lg font-bold">
-                {subjectResults.length}
-              </p>
-            </div>
+                    </tr>
 
-            <div className="rounded-lg border p-4 text-center">
-              <p className="text-xs text-gray-500">
-                Annual Average
-              </p>
-              <p className="mt-1 text-lg font-bold">
-                {studentAverage !==
-                null
-                  ? studentAverage.toFixed(
-                      2
-                    )
-                  : "—"}
-              </p>
-            </div>
+                    {/* CLASS RANK */}
 
-            <div className="rounded-lg border p-4 text-center">
-              <p className="text-xs text-gray-500">
-                Rank
-              </p>
-              <p className="mt-1 text-lg font-bold">
-                {studentRank !==
-                null
-                  ? studentRank
-                  : "—"}
-              </p>
-            </div>
+                    <tr>
 
-            <div className="rounded-lg border p-4 text-center">
-              <p className="text-xs text-gray-500">
-                Class Size
-              </p>
-              <p className="mt-1 text-lg font-bold">
-                {classSize}
-              </p>
-            </div>
+                      <td
+                        colSpan={2}
+                        className="border p-1.5 text-left font-medium"
+                      >
+                        Class Rank
+                      </td>
 
-          </div>
+                      <td className="border p-1.5 text-center">
+                        {semester1Rank ??
+                          "—"}
+                      </td>
 
-          {/* ATTENDANCE */}
+                      <td className="border p-1.5 text-center">
+                        {semester2Rank ??
+                          "—"}
+                      </td>
 
-          <div className="mt-6 rounded-lg border p-5">
+                      <td className="border p-1.5 text-center">
+                        {studentRank ??
+                          "—"}
+                      </td>
 
-            <h3 className="font-semibold">
-              Attendance
-            </h3>
+                    </tr>
 
-            <div className="mt-4 grid grid-cols-2 gap-4 md:grid-cols-4">
+                    {/* NUMBER OF STUDENTS */}
 
-              <div>
-                <p className="text-xs text-gray-500">
-                  Present
-                </p>
-                <p className="font-semibold">
-                  {presentDays}
-                </p>
+                    <tr>
+
+                      <td
+                        colSpan={2}
+                        className="border p-1.5 text-left font-medium"
+                      >
+                        No. of Students
+                      </td>
+
+                      <td className="border p-1.5 text-center">
+                        {classSize}
+                      </td>
+
+                      <td className="border p-1.5 text-center">
+                        {classSize}
+                      </td>
+
+                      <td className="border p-1.5 text-center">
+                        {classSize}
+                      </td>
+
+                    </tr>
+
+                    {/* CONDUCT */}
+
+                    <tr>
+
+                      <td
+                        colSpan={2}
+                        className="border p-1.5 text-left font-medium"
+                      >
+                        Conduct
+                      </td>
+
+                      <td className="border p-1.5 text-center">
+                        {semester1Conduct}
+                      </td>
+
+                      <td className="border p-1.5 text-center">
+                        {semester2Conduct}
+                      </td>
+
+                      <td className="border p-1.5 text-center">
+                        {annualConduct}
+                      </td>
+
+                    </tr>
+
+                    {/* ABSENCE */}
+
+                    <tr>
+
+                      <td
+                        colSpan={2}
+                        className="border p-1.5 text-left font-medium"
+                      >
+                        Absence
+                      </td>
+
+                      <td className="border p-1.5 text-center">
+                        {semester1AbsentDays}
+                      </td>
+
+                      <td className="border p-1.5 text-center">
+                        {semester2AbsentDays}
+                      </td>
+
+                      <td className="border p-1.5 text-center">
+                        {annualAbsentDays}
+                      </td>
+
+                    </tr>
+
+                  </tbody>
+
+                </table>
+
               </div>
 
-              <div>
-                <p className="text-xs text-gray-500">
-                  Absent
-                </p>
-                <p className="font-semibold">
-                  {absentDays}
-                </p>
+            </div>
+
+          </section>
+
+          {/* =================================================
+              PAGE 3
+              ================================================= */}
+
+          <section className="report-page report-page-3 bg-white">
+
+            <div className="report-page-inner">
+
+              <h2 className="text-center text-lg font-bold">
+                COMMENTS AND PROMOTION
+              </h2>
+
+              {/* SEMESTER 1 */}
+
+              <div className="mt-4 rounded-md border p-4">
+
+                <h3 className="font-bold text-sm">
+                  First Semester
+                </h3>
+
+                <div className="mt-2 min-h-[55px] whitespace-pre-wrap border-b pb-2 text-[10px]">
+                  {semester1Report?.comment ||
+                    "No comment recorded."}
+                </div>
+
+                <div className="mt-3 grid grid-cols-2 gap-4 text-[10px]">
+
+                  <div>
+
+                    <p className="text-gray-500">
+                      Homeroom Teacher
+                    </p>
+
+                    <p className="mt-1 font-medium">
+                      {semester1TeacherName}
+                    </p>
+
+                    <div className="mt-2 h-8">
+
+                      {semester1Report?.homeroomTeacherSignature ? (
+                        <img
+                          src={
+                            semester1Report.homeroomTeacherSignature
+                          }
+                          alt="Semester 1 teacher signature"
+                          className="h-8 max-w-[120px] object-contain"
+                        />
+                      ) : (
+                        <div className="mt-5 w-32 border-b border-gray-500" />
+                      )}
+
+                    </div>
+
+                    <p className="mt-1 text-[9px] text-gray-500">
+                      Teacher Signature
+                    </p>
+
+                  </div>
+
+                  <div>
+
+                    <p className="text-gray-500">
+                      Parent Name
+                    </p>
+
+                    <p className="mt-1 font-medium">
+                      {parentDisplayName}
+                    </p>
+
+                    <div className="mt-7 w-32 border-b border-gray-500" />
+
+                    <p className="mt-1 text-[9px] text-gray-500">
+                      Parent Signature
+                    </p>
+
+                  </div>
+
+                </div>
+
               </div>
 
-              <div>
-                <p className="text-xs text-gray-500">
-                  Recorded Days
-                </p>
-                <p className="font-semibold">
-                  {recordedDays}
-                </p>
+              {/* SEMESTER 2 */}
+
+              <div className="mt-4 rounded-md border p-4">
+
+                <h3 className="font-bold text-sm">
+                  Second Semester
+                </h3>
+
+                <div className="mt-2 min-h-[55px] whitespace-pre-wrap border-b pb-2 text-[10px]">
+                  {semester2Report?.comment ||
+                    "No comment recorded."}
+                </div>
+
+                <div className="mt-3 grid grid-cols-2 gap-4 text-[10px]">
+
+                  <div>
+
+                    <p className="text-gray-500">
+                      Homeroom Teacher
+                    </p>
+
+                    <p className="mt-1 font-medium">
+                      {semester2TeacherName}
+                    </p>
+
+                    <div className="mt-2 h-8">
+
+                      {semester2Report?.homeroomTeacherSignature ? (
+                        <img
+                          src={
+                            semester2Report.homeroomTeacherSignature
+                          }
+                          alt="Semester 2 teacher signature"
+                          className="h-8 max-w-[120px] object-contain"
+                        />
+                      ) : (
+                        <div className="mt-5 w-32 border-b border-gray-500" />
+                      )}
+
+                    </div>
+
+                    <p className="mt-1 text-[9px] text-gray-500">
+                      Teacher Signature
+                    </p>
+
+                  </div>
+
+                  <div>
+
+                    <p className="text-gray-500">
+                      Parent Name
+                    </p>
+
+                    <p className="mt-1 font-medium">
+                      {parentDisplayName}
+                    </p>
+
+                    <div className="mt-7 w-32 border-b border-gray-500" />
+
+                    <p className="mt-1 text-[9px] text-gray-500">
+                      Parent Signature
+                    </p>
+
+                  </div>
+
+                </div>
+
               </div>
 
-              <div>
-                <p className="text-xs text-gray-500">
-                  Attendance %
+              {/* PROMOTION */}
+
+              <div className="mt-4 rounded-md border-2 p-4 text-center">
+
+                <h3 className="text-sm font-bold">
+                  Promotion / Detention
+                </h3>
+
+                <p className="mt-2 text-base font-semibold">
+                  {promotionText}
                 </p>
-                <p className="font-semibold">
-                  {attendancePercentage.toFixed(
-                    2
+
+                {promotionPolicy &&
+                  studentAverage !==
+                    null && (
+                    <p className="mt-2 text-[9px] text-gray-500">
+                      Based on annual average:
+                      {" "}
+                      {studentAverage.toFixed(
+                        2
+                      )}
+                    </p>
                   )}
-                  %
-                </p>
+
+              </div>
+
+              {/* MANAGING DIRECTOR */}
+
+              <div className="mt-4 rounded-md border p-4">
+
+                <h3 className="text-center text-sm font-bold">
+                  Managing Director
+                </h3>
+
+                <div className="mt-3 grid grid-cols-3 gap-4 text-[10px]">
+
+                  <div>
+
+                    <p className="text-gray-500">
+                      Name
+                    </p>
+
+                    <p className="mt-1 font-medium">
+                      {managingDirectorDisplayName}
+                    </p>
+
+                  </div>
+
+                  <div>
+
+                    <p className="text-gray-500">
+                      Signature
+                    </p>
+
+                    <div className="mt-1 h-9">
+
+                      {reportCard?.managingDirectorSignature ? (
+                        <img
+                          src={
+                            reportCard.managingDirectorSignature
+                          }
+                          alt="Managing Director signature"
+                          className="h-8 max-w-[120px] object-contain"
+                        />
+                      ) : (
+                        <div className="mt-5 w-32 border-b border-gray-500" />
+                      )}
+
+                    </div>
+
+                  </div>
+
+                  <div>
+
+                    <p className="text-gray-500">
+                      Date
+                    </p>
+
+                    <p className="mt-1 font-medium">
+                      {reportCard?.managingDirectorDate
+                        ? reportCard.managingDirectorDate.toLocaleDateString(
+                            "en-GB"
+                          )
+                        : new Date().toLocaleDateString(
+                            "en-GB"
+                          )}
+                    </p>
+
+                  </div>
+
+                </div>
+
+              </div>
+
+              <div className="mt-auto border-t pt-3 text-center text-[8px] text-gray-500">
+                Student Report Card —{" "}
+                {academicYear.name}
               </div>
 
             </div>
 
-          </div>
+          </section>
 
-          {/* CONDUCT */}
-
-          <div className="mt-6 grid grid-cols-2 gap-4">
-
-            <div className="rounded-lg border p-4">
-              <p className="text-xs text-gray-500">
-                Conduct - Semester 1
-              </p>
-
-              <p className="mt-2 min-h-[30px]">
-                {reportCard?.conductSemester1 ||
-                  "Not recorded"}
-              </p>
-            </div>
-
-            <div className="rounded-lg border p-4">
-              <p className="text-xs text-gray-500">
-                Conduct - Semester 2
-              </p>
-
-              <p className="mt-2 min-h-[30px]">
-                {reportCard?.conductSemester2 ||
-                  "Not recorded"}
-              </p>
-            </div>
-
-          </div>
-
-        </section>
-
-        {/* =================================================
-            PAGE 3
-            COMMENTS + PROMOTION
-            ================================================= */}
-
-        <section className="report-page mt-8 bg-white min-h-[1000px] p-8 md:p-12">
-
-          <h2 className="text-center text-xl font-bold">
-            COMMENTS AND PROMOTION
-          </h2>
-
-          {/* SEMESTER COMMENTS */}
-
-          <div className="mt-10 grid gap-8">
-
-            <div className="rounded-lg border p-6">
-
-              <h3 className="font-bold">
-                Semester 1 Comment
-              </h3>
-
-              <div className="mt-4 min-h-[120px] whitespace-pre-wrap border-b pb-4">
-                {reportCard?.commentSemester1 ||
-                  "No comment recorded."}
-              </div>
-
-            </div>
-
-            <div className="rounded-lg border p-6">
-
-              <h3 className="font-bold">
-                Semester 2 Comment
-              </h3>
-
-              <div className="mt-4 min-h-[120px] whitespace-pre-wrap border-b pb-4">
-                {reportCard?.commentSemester2 ||
-                  "No comment recorded."}
-              </div>
-
-            </div>
-
-          </div>
-
-          {/* PARENT INFORMATION */}
-
-          <div className="mt-8 rounded-lg border p-6">
-
-            <h3 className="font-bold">
-              Parent / Guardian
-            </h3>
-
-            <div className="mt-5 grid grid-cols-1 gap-6 md:grid-cols-2">
-
-              <div>
-                <p className="text-xs text-gray-500">
-                  Semester 1
-                </p>
-
-                <p className="mt-2 font-medium">
-                  {reportCard?.parentNameSemester1 ||
-                    "Not recorded"}
-                </p>
-              </div>
-
-              <div>
-                <p className="text-xs text-gray-500">
-                  Semester 2
-                </p>
-
-                <p className="mt-2 font-medium">
-                  {reportCard?.parentNameSemester2 ||
-                    "Not recorded"}
-                </p>
-              </div>
-
-            </div>
-
-          </div>
-
-          {/* PROMOTION */}
-
-          <div className="mt-8 rounded-lg border-2 p-6">
-
-            <h3 className="text-center text-lg font-bold">
-              Promotion / Detention
-            </h3>
-
-            <p className="mt-5 text-center text-xl font-semibold">
-              {promotionText}
-            </p>
-
-          </div>
-
-          {/* SIGNATURES */}
-
-          <div className="mt-20 grid grid-cols-1 gap-16 md:grid-cols-3">
-
-            <div className="text-center">
-
-              <div className="mx-auto w-48 border-b border-gray-500" />
-
-              <p className="mt-2 text-sm">
-                Class Teacher
-              </p>
-
-            </div>
-
-            <div className="text-center">
-
-              <div className="mx-auto w-48 border-b border-gray-500" />
-
-              <p className="mt-2 text-sm">
-                Parent / Guardian
-              </p>
-
-            </div>
-
-            <div className="text-center">
-
-              <div className="mx-auto w-48 border-b border-gray-500" />
-
-              <p className="mt-2 text-sm">
-                Managing Director
-              </p>
-
-            </div>
-
-          </div>
-
-          <div className="mt-20 border-t pt-5 text-center text-xs text-gray-500">
-            Report generated for academic year{" "}
-            {academicYear.name}
-          </div>
-
-        </section>
-
-        {/* =================================================
-            PAGE 4
-            BASIC SKILLS
-            ================================================= */}
-
-        <section className="report-page mt-8 bg-white min-h-[1000px] p-8 md:p-12">
-
-          <h2 className="text-center text-xl font-bold">
-            BASIC SKILLS EVALUATION
-          </h2>
-
-          <div className="mt-10 overflow-hidden rounded-lg border">
-
-            <table className="w-full border-collapse text-sm">
-
-              <thead>
-
-                <tr className="bg-gray-100">
-
-                  <th className="border p-3 text-left">
-                    Skill
-                  </th>
-
-                  <th className="border p-3 text-center">
-                    Semester 1
-                  </th>
-
-                  <th className="border p-3 text-center">
-                    Semester 2
-                  </th>
-
-                </tr>
-
-              </thead>
-
-              <tbody>
-
-                {[
-                  [
-                    "Reading",
-                    "reading",
-                  ],
-                  [
-                    "Writing",
-                    "writing",
-                  ],
-                  [
-                    "Spelling",
-                    "spelling",
-                  ],
-                  [
-                    "Comprehension",
-                    "comprehension",
-                  ],
-                  [
-                    "Computation",
-                    "computation",
-                  ],
-                  [
-                    "Punctuality",
-                    "punctuality",
-                  ],
-                  [
-                    "Uniform",
-                    "uniform",
-                  ],
-                  [
-                    "Material Handling",
-                    "materialHandling",
-                  ],
-                  [
-                    "Following Directions",
-                    "direction",
-                  ],
-                  [
-                    "Completion of Work",
-                    "completion",
-                  ],
-                  [
-                    "Use of English",
-                    "englishUse",
-                  ],
-                  [
-                    "Work Ethics",
-                    "workEthics",
-                  ],
-                  [
-                    "Skills",
-                    "skills",
-                  ],
-                  [
-                    "Overall Progress",
-                    "overallProgress",
-                  ],
-                ].map(
-                  ([label, key]) => (
-                    <tr key={key}>
-
-                      <td className="border p-3 font-medium">
-                        {label}
-                      </td>
-
-                      <td className="border p-3 text-center">
-                        {semester1Skills?.[
-                          key as keyof typeof semester1Skills
-                        ]?.toString() ||
-                          "—"}
-                      </td>
-
-                      <td className="border p-3 text-center">
-                        {semester2Skills?.[
-                          key as keyof typeof semester2Skills
-                        ]?.toString() ||
-                          "—"}
-                      </td>
-
-                    </tr>
-                  )
-                )}
-
-              </tbody>
-
-            </table>
-
-          </div>
-
-          {/* EVALUATION KEY */}
-
-          <div className="mt-10 rounded-lg border p-6">
-
-            <h3 className="text-center font-bold">
-              Evaluation Key
-            </h3>
-
-            <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-3">
-
-              <div>
-                <strong>A</strong>{" "}
-                — Excellent
-              </div>
-
-              <div>
-                <strong>B</strong>{" "}
-                — Very Good
-              </div>
-
-              <div>
-                <strong>C</strong>{" "}
-                — Good
-              </div>
-
-              <div>
-                <strong>D</strong>{" "}
-                — Satisfactory
-              </div>
-
-              <div>
-                <strong>E</strong>{" "}
-                — Needs Improvement
-              </div>
-
-              <div>
-                <strong>F</strong>{" "}
-                — Unsatisfactory
-              </div>
-
-            </div>
-
-          </div>
-
-          {/* FOOTER */}
-
-          <div className="mt-20 text-center">
-
-            <div className="mx-auto w-56 border-b border-gray-500" />
-
-            <p className="mt-2 text-sm">
-              Managing Director
-            </p>
-
-          </div>
-
-        </section>
+        </div>
 
       </div>
 
-      {/* PRINT STYLES */}
+      {/* =====================================================
+          SCREEN + PRINT STYLES
+          ===================================================== */}
 
       <style
         dangerouslySetInnerHTML={{
           __html: `
+            .report-print-root {
+              width: 100%;
+              max-width: 1100px;
+              margin: 0 auto;
+            }
+
+            .report-sheet {
+              width: 100%;
+              max-width: 1100px;
+              margin: 0 auto 32px auto;
+              display: flex;
+              flex-direction: column;
+              gap: 32px;
+              box-sizing: border-box;
+            }
+
+            .report-page {
+              width: 100%;
+              min-height: 720px;
+              background: white;
+              border: 1px solid #e5e7eb;
+              box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+              overflow: hidden;
+              box-sizing: border-box;
+            }
+
+            .report-page-inner {
+              width: 100%;
+              min-height: 720px;
+              padding: 32px;
+              display: flex;
+              flex-direction: column;
+              box-sizing: border-box;
+            }
+
             @media print {
+
               @page {
-                size: A4;
+                size: A4 landscape;
                 margin: 0;
               }
 
+              html,
               body {
+                width: 297mm !important;
+                min-width: 297mm !important;
+                max-width: 297mm !important;
+                height: auto !important;
+                min-height: 0 !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                overflow: visible !important;
                 background: white !important;
               }
 
-              .report-page {
+              .report-print-root {
+                display: block !important;
+                position: absolute !important;
+                left: 0 !important;
+                top: 0 !important;
+                width: 297mm !important;
+                min-width: 297mm !important;
+                max-width: 297mm !important;
+                height: auto !important;
+                min-height: 0 !important;
                 margin: 0 !important;
-                width: 210mm;
-                min-height: 297mm;
-                page-break-after: always;
-                break-after: page;
-                box-shadow: none !important;
+                padding: 0 !important;
+                overflow: visible !important;
+                background: white !important;
+                visibility: visible !important;
+                z-index: 2147483647 !important;
               }
 
-              .report-page:last-child {
-                page-break-after: auto;
-                break-after: auto;
+              .report-print-root * {
+                visibility: visible !important;
+              }
+
+              .report-sheet {
+                display: grid !important;
+                grid-template-columns: 148.5mm 148.5mm !important;
+                grid-template-rows: 210mm !important;
+
+                width: 297mm !important;
+                min-width: 297mm !important;
+                max-width: 297mm !important;
+
+                height: 210mm !important;
+                min-height: 210mm !important;
+                max-height: 210mm !important;
+
+                margin: 0 !important;
+                padding: 0 !important;
+
+                overflow: hidden !important;
+
+                break-after: page !important;
+                page-break-after: always !important;
+
+                box-sizing: border-box !important;
+              }
+
+              .report-sheet:last-child {
+                break-after: auto !important;
+                page-break-after: auto !important;
+              }
+
+              .report-page {
+                display: block !important;
+
+                width: 148.5mm !important;
+                min-width: 148.5mm !important;
+                max-width: 148.5mm !important;
+
+                height: 210mm !important;
+                min-height: 210mm !important;
+                max-height: 210mm !important;
+
+                margin: 0 !important;
+                padding: 0 !important;
+
+                overflow: hidden !important;
+
+                box-sizing: border-box !important;
+
+                break-inside: avoid !important;
+                page-break-inside: avoid !important;
+
+                background: white !important;
+              }
+
+              .report-page-inner {
+                display: block !important;
+
+                width: 148.5mm !important;
+                min-width: 148.5mm !important;
+                max-width: 148.5mm !important;
+
+                height: 210mm !important;
+                min-height: 210mm !important;
+                max-height: 210mm !important;
+
+                margin: 0 !important;
+                padding: 7mm !important;
+
+                box-sizing: border-box !important;
+
+                overflow: hidden !important;
+              }
+
+              .report-page table {
+                width: 100% !important;
+                max-width: 100% !important;
+                table-layout: fixed !important;
+                box-sizing: border-box !important;
+                border-collapse: collapse !important;
+              }
+
+              .report-page th,
+              .report-page td {
+                box-sizing: border-box !important;
+                max-width: 100% !important;
+                overflow: hidden !important;
+                word-wrap: break-word !important;
+                overflow-wrap: anywhere !important;
+              }
+
+              .report-page img {
+                max-width: 100% !important;
+                height: auto !important;
+              }
+
+              .report-print-root .print\\:hidden {
+                display: none !important;
+              }
+
+              .report-print-root,
+              .report-print-root > *,
+              .report-sheet,
+              .report-page,
+              .report-page-inner {
+                overflow-x: hidden !important;
+              }
+
+              header,
+              nav,
+              aside,
+              footer {
+                display: none !important;
               }
             }
           `,
