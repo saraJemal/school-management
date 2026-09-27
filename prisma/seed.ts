@@ -478,6 +478,13 @@ console.log("Students done");
         name: "2026/2027",
         startDate: new Date("2026-09-01"),
         endDate: new Date("2027-07-31"),
+
+        semester1StartDate: new Date("2026-09-15"),
+        semester1EndDate: new Date("2027-02-05"),
+
+        semester2StartDate: new Date("2027-02-08"),
+        semester2EndDate: new Date("2027-06-30"),
+
         isCurrent: true,
       },
     ],
