@@ -73,6 +73,12 @@ const menuItems = [
         visible: ["admin", "teacher", "student", "parent"],
       },
       {
+        label: "Promotion Policies",
+        href: "/list/promotion-policies",
+        icon: "/lesson.png",
+        visible: ["admin"],
+      },
+      {
         icon: "/result.png",
         label: "Report Cards",
         href: "/list/report-cards",
@@ -107,6 +113,12 @@ const menuItems = [
         label: "Announcements",
         href: "/list/announcements",
         visible: ["admin", "teacher", "student", "parent"],
+      },
+      {
+        icon: "/calendar.png",
+        label: "Academic Years",
+        href: "/list/academic-years",
+        visible: ["admin"],
       },
     ],
   },

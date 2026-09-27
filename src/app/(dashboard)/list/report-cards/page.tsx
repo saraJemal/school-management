@@ -152,24 +152,6 @@ const ReportCardsPage = async ({
 
   /*
    * ------------------------------------------------------------
-   * GRADES
-   * ------------------------------------------------------------
-   */
-
-  const grades =
-    await prisma.grade.findMany({
-      orderBy: {
-        level: "asc",
-      },
-      select: {
-        id: true,
-        level: true,
-        name: true,
-      },
-    });
-
-  /*
-   * ------------------------------------------------------------
    * TEACHER AUTHORIZATION
    * ------------------------------------------------------------
    *
@@ -183,8 +165,11 @@ const ReportCardsPage = async ({
    *      ↓
    * Teacher.id
    *
-   * For teachers, this DB teacher ID is used to restrict
-   * both the class filter and the student query.
+   * For teachers, this DB teacher ID is used to restrict:
+   *
+   * - grades
+   * - classes
+   * - students
    */
 
   let teacherId: string | undefined;
@@ -218,14 +203,6 @@ const ReportCardsPage = async ({
    * TEACHER:
    *   Can see ONLY classes where the logged-in teacher is the
    *   homeroom teacher.
-   *
-   * This restriction is applied to the filter itself, so the
-   * teacher cannot even select another teacher's class from the
-   * normal UI.
-   *
-   * The student query below repeats the authorization check
-   * server-side as a second layer of protection against manually
-   * changing classId in the URL.
    */
 
   const classes =
@@ -246,6 +223,74 @@ const ReportCardsPage = async ({
         id: true,
         name: true,
         gradeId: true,
+      },
+    });
+
+  /*
+   * ------------------------------------------------------------
+   * GRADES
+   * ------------------------------------------------------------
+   *
+   * ADMIN:
+   *   Can see ALL grades.
+   *
+   * TEACHER:
+   *   Can see ONLY grades belonging to classes where the logged-in
+   *   teacher is the homeroom teacher.
+   *
+   * This is important because the class selector was already
+   * restricted, but previously the grade selector still showed
+   * every grade in the school.
+   *
+   * Example:
+   *
+   * Teacher → Class 3A → Grade 3
+   *
+   * Grade selector:
+   *   Grade 3
+   *
+   * NOT:
+   *   KG1
+   *   KG2
+   *   Grade 1
+   *   Grade 2
+   *   Grade 4
+   *   ...
+   */
+
+  const teacherGradeIds =
+    role === "teacher"
+      ? Array.from(
+          new Set(
+            classes
+              .map((classItem) => classItem.gradeId)
+              .filter(
+                (gradeId): gradeId is number =>
+                  typeof gradeId === "number"
+              )
+          )
+        )
+      : [];
+
+  const grades =
+    await prisma.grade.findMany({
+      where:
+        role === "teacher"
+          ? {
+              id: {
+                in: teacherGradeIds,
+              },
+            }
+          : undefined,
+
+      orderBy: {
+        level: "asc",
+      },
+
+      select: {
+        id: true,
+        level: true,
+        name: true,
       },
     });
 
@@ -273,145 +318,185 @@ const ReportCardsPage = async ({
   ) {
     /*
      * ----------------------------------------------------------
-     * VERIFY SELECTED CLASS
+     * VERIFY SELECTED GRADE
      * ----------------------------------------------------------
      *
-     * The selected class must:
+     * For teachers, the selected grade must belong to one of
+     * their authorized homeroom classes.
      *
-     * 1. Belong to the selected grade.
-     * 2. Exist.
-     * 3. For teachers, belong to the logged-in teacher as
-     *    homeroom teacher.
-     *
-     * This protects against manually changing classId in the URL.
+     * This protects against manually changing gradeId in the URL.
      */
 
-    const selectedClass =
-      await prisma.class.findFirst({
+    const authorizedGrade =
+      await prisma.grade.findFirst({
         where: {
-          id: selectedClassId,
-          gradeId: selectedGradeId,
+          id: selectedGradeId,
 
           ...(role === "teacher"
             ? {
-                homeRoomTeacherId:
-                  teacherId,
+                classes: {
+                  some: {
+                    homeRoomTeacherId:
+                      teacherId,
+                  },
+                },
               }
             : {}),
         },
 
         select: {
           id: true,
-          name: true,
         },
       });
 
     /*
-     * If the selected class does not belong to the teacher,
-     * return an empty result.
+     * If the selected grade is not authorized, return an empty
+     * student result.
      *
-     * Therefore changing:
+     * Therefore manually changing:
      *
-     * ?classId=...
+     * ?gradeId=...
      *
-     * manually cannot expose another teacher's students.
+     * cannot expose another teacher's class or students.
      */
 
-    if (selectedClass) {
-      const where = {
-        academicYearId:
-          selectedAcademicYearId,
-
-        classId: selectedClassId,
-      };
-
+    if (authorizedGrade) {
       /*
        * --------------------------------------------------------
-       * COUNT
+       * VERIFY SELECTED CLASS
        * --------------------------------------------------------
+       *
+       * The selected class must:
+       *
+       * 1. Belong to the selected grade.
+       * 2. Exist.
+       * 3. For teachers, belong to the logged-in teacher as
+       *    homeroom teacher.
        */
 
-      count =
-        await prisma.studentEnrollment.count({
-          where,
+      const selectedClass =
+        await prisma.class.findFirst({
+          where: {
+            id: selectedClassId,
+            gradeId: selectedGradeId,
+
+            ...(role === "teacher"
+              ? {
+                  homeRoomTeacherId:
+                    teacherId,
+                }
+              : {}),
+          },
+
+          select: {
+            id: true,
+            name: true,
+          },
         });
 
       /*
-       * --------------------------------------------------------
-       * ENROLLMENTS
-       * --------------------------------------------------------
+       * If the selected class does not belong to the teacher,
+       * return an empty result.
+       *
+       * This protects against manually changing classId in the URL.
        */
 
-      const enrollments =
-        await prisma.studentEnrollment.findMany({
-          where,
+      if (selectedClass) {
+        const where = {
+          academicYearId:
+            selectedAcademicYearId,
 
-          orderBy: {
-            rollNumber: "asc",
-          },
+          classId: selectedClassId,
+        };
 
-          skip:
-            (page - 1) *
-            ITEM_PER_PAGE,
+        /*
+         * ------------------------------------------------------
+         * COUNT
+         * ------------------------------------------------------
+         */
 
-          take: ITEM_PER_PAGE,
+        count =
+          await prisma.studentEnrollment.count({
+            where,
+          });
 
-          select: {
-            rollNumber: true,
+        /*
+         * ------------------------------------------------------
+         * ENROLLMENTS
+         * ------------------------------------------------------
+         */
 
-            student: {
-              select: {
-                id: true,
-                name: true,
-                surname: true,
-              },
+        const enrollments =
+          await prisma.studentEnrollment.findMany({
+            where,
+
+            orderBy: {
+              rollNumber: "asc",
             },
 
-            class: {
-              select: {
-                id: true,
-                name: true,
+            skip:
+              (page - 1) *
+              ITEM_PER_PAGE,
 
-                grade: {
-                  select: {
-                    id: true,
-                    name: true,
+            take: ITEM_PER_PAGE,
+
+            select: {
+              rollNumber: true,
+
+              student: {
+                select: {
+                  id: true,
+                  name: true,
+                  surname: true,
+                },
+              },
+
+              class: {
+                select: {
+                  id: true,
+                  name: true,
+
+                  grade: {
+                    select: {
+                      id: true,
+                      name: true,
+                    },
                   },
                 },
               },
             },
-          },
-        });
+          });
 
-      /*
-       * --------------------------------------------------------
-       * TABLE DATA
-       * --------------------------------------------------------
-       */
+        /*
+         * ------------------------------------------------------
+         * TABLE DATA
+         * ------------------------------------------------------
+         */
 
-      students =
-        enrollments.map(
-          (enrollment) => ({
-            id:
-              enrollment.student.id,
+        students =
+          enrollments.map(
+            (enrollment) => ({
+              id:
+                enrollment.student.id,
 
-            name:
-              enrollment.student.name,
+              name:
+                enrollment.student.name,
 
-            surname:
-              enrollment.student.surname,
+              surname:
+                enrollment.student.surname,
 
-            enrollments: [
-              {
-                rollNumber:
-                  enrollment.rollNumber,
+              enrollments: [
+                {
+                  rollNumber:
+                    enrollment.rollNumber,
 
-                class:
-                  enrollment.class,
-              },
-            ],
-          })
-        );
+                  class:
+                    enrollment.class,
+                },
+              ],
+            })
+          );
+      }
     }
   }
 

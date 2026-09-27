@@ -123,15 +123,28 @@ const calculateAnnualTotal = (
     );
 
   if (
-    semester1Total === null ||
-    semester2Total === null
+    semester1Total !== null &&
+    semester2Total !== null
   ) {
-    return null;
+    // Both semesters recorded
+    return roundResult(
+      (semester1Total +
+        semester2Total) /
+        2
+    );
   }
 
-  return roundResult(
-    (semester1Total + semester2Total) / 2
-  );
+  if (semester1Total !== null) {
+    // Semester 2 not yet recorded
+    return semester1Total;
+  }
+
+  if (semester2Total !== null) {
+    // Semester 1 not recorded
+    return semester2Total;
+  }
+
+  return null;
 };
 
 const getAge = (birthday: Date) => {
@@ -658,21 +671,36 @@ const StudentReportCardPage = async ({
            * ANNUAL SUBJECT RESULT
            */
 
-          let annualAverage:
-            | number
-            | null = null;
+         let annualAverage:
+                  | number
+                  | null = null;
 
-          if (
-            semester1 !== null &&
-            semester2 !== null
-          ) {
-            annualAverage =
-              roundResult(
-                (semester1 +
-                  semester2) /
-                  2
-              );
-          }
+                if (
+                  semester1 !== null &&
+                  semester2 !== null
+                ) {
+                  // Both semesters recorded
+                  annualAverage =
+                    roundResult(
+                      (semester1 +
+                        semester2) /
+                        2
+                    );
+                } else if (
+                  semester1 !== null
+                ) {
+                  // Semester 2 not yet recorded:
+                  // use Semester 1 as the annual result
+                  annualAverage =
+                    semester1;
+                } else if (
+                  semester2 !== null
+                ) {
+                  // Semester 1 not recorded:
+                  // use Semester 2 as the annual result
+                  annualAverage =
+                    semester2;
+                }
 
           return {
             subjectId: subject.id,
