@@ -11,6 +11,8 @@ import {
   deleteAssessmentRow,
   deleteStudentEnrollment,
   deleteAdmin,
+  deletePromotionPolicy,
+  deleteAcademicYear,
 } from "@/lib/actions";
 
 import dynamic from "next/dynamic";
@@ -25,7 +27,6 @@ import {
 import { toast } from "react-toastify";
 import { FormContainerProps } from "./FormContainer";
 import ResetPasswordForm from "./ResetPasswordForm";
-
 
 // ---------------------------------------------------------
 // DELETE ACTION MAP
@@ -44,8 +45,9 @@ const deleteActionMap = {
   studentEnrollment: deleteStudentEnrollment,
   event: deleteSubject,
   announcement: deleteSubject,
+  promotionPolicy: deletePromotionPolicy,
+  academicYear: deleteAcademicYear,
 };
-
 
 // ---------------------------------------------------------
 // EXISTING DYNAMIC FORM IMPORTS
@@ -128,6 +130,20 @@ const ReportCardForm = dynamic(
   }
 );
 
+const PromotionPolicyForm = dynamic(
+  () => import("./forms/PromotionPolicyForm"),
+  {
+    loading: () => <h1>Loading...</h1>,
+  }
+);
+
+const AcademicYearForm = dynamic(
+  () => import("./forms/AcademicYearForm"),
+  {
+    loading: () => <h1>Loading...</h1>,
+  }
+);
+
 // ---------------------------------------------------------
 // EXISTING CREATE / UPDATE FORMS
 // ---------------------------------------------------------
@@ -203,7 +219,6 @@ const forms: {
     />
   ),
 
-
   assessmentRow: (setOpen, type, data, relatedData) => (
     <AssessmentRowForm
       type={type}
@@ -214,13 +229,13 @@ const forms: {
   ),
 
   studentEnrollment: (setOpen, type, data, relatedData) => (
-  <StudentEnrollmentForm
-    type={type}
-    data={data}
-    setOpen={setOpen}
-    relatedData={relatedData}
-  />
-),
+    <StudentEnrollmentForm
+      type={type}
+      data={data}
+      setOpen={setOpen}
+      relatedData={relatedData}
+    />
+  ),
 
   admin: (setOpen, type, data) => (
     <AdminForm
@@ -238,9 +253,30 @@ const forms: {
       relatedData={relatedData}
     />
   ),
+
+  promotionPolicy: (
+    setOpen,
+    type,
+    data,
+    relatedData
+  ) => (
+    <PromotionPolicyForm
+      type={type}
+      data={data}
+      setOpen={setOpen}
+      relatedData={relatedData}
+    />
+  ),
+
+  academicYear: (setOpen, type, data, relatedData) => (
+  <AcademicYearForm
+    type={type}
+    data={data}
+    setOpen={setOpen}
+  />
+),
+
 };
-
-
 
 // ---------------------------------------------------------
 // NORMAL DELETE FORM
@@ -255,7 +291,6 @@ const DeleteForm = ({
   id: string | number;
   setOpen: Dispatch<SetStateAction<boolean>>;
 }) => {
-  
   const router = useRouter();
 
   const handleSubmit = async (formData: FormData) => {
@@ -267,22 +302,41 @@ const DeleteForm = ({
       formData
     );
 
-    console.log("DELETE RESULT:", table, result);
+    console.log(
+      "DELETE RESULT:",
+      table,
+      result
+    );
 
     if (result.success) {
-      toast.success(`${table} has been deleted!`);
+      toast.success(
+        `${table} has been deleted!`
+      );
+
       setOpen(false);
       router.refresh();
-    } else if (result.error === "unauthorized") {
+    } else if (
+      result.error === "unauthorized"
+    ) {
       toast.error(
         "You are not authorized to perform this action."
       );
-    } else if (result.error === "cannot-delete-self") {
-      toast.error("You cannot delete your own account.");
-    } else if (result.error === "admin-not-found") {
-      toast.error("Admin was not found.");
+    } else if (
+      result.error === "cannot-delete-self"
+    ) {
+      toast.error(
+        "You cannot delete your own account."
+      );
+    } else if (
+      result.error === "admin-not-found"
+    ) {
+      toast.error(
+        "Admin was not found."
+      );
     } else {
-      toast.error(`Failed to delete ${table}.`);
+      toast.error(
+        `Failed to delete ${table}.`
+      );
     }
   };
 
@@ -312,7 +366,6 @@ const DeleteForm = ({
   );
 };
 
-
 // ---------------------------------------------------------
 // ASSESSMENT ROW DELETE FORM
 // ---------------------------------------------------------
@@ -326,7 +379,9 @@ const AssessmentRowDeleteForm = ({
 }) => {
   const router = useRouter();
 
-  const handleSubmit = async (formData: FormData) => {
+  const handleSubmit = async (
+    formData: FormData
+  ) => {
     const result = await deleteAssessmentRow(
       {
         success: false,
@@ -385,8 +440,10 @@ const AssessmentRowDeleteForm = ({
 
       <span className="text-center font-medium">
         All assessment definitions for{" "}
-        <strong>{data?.subjectName}</strong> will be
-        deleted.
+        <strong>
+          {data?.subjectName}
+        </strong>{" "}
+        will be deleted.
         <br />
         Are you sure?
       </span>
@@ -400,7 +457,6 @@ const AssessmentRowDeleteForm = ({
     </form>
   );
 };
-
 
 // ---------------------------------------------------------
 // FORM MODAL
@@ -416,20 +472,21 @@ const FormModal = ({
   relatedData?: any;
 }) => {
   const size =
-  type === "create"
-    ? "w-8 h-8"
-    : "w-7 h-7";
+    type === "create"
+      ? "w-8 h-8"
+      : "w-7 h-7";
 
-const bgColor =
-  type === "create"
-    ? "bg-badirStar"
-    : type === "update"
-    ? "bg-slate-500"
-    : type === "resetPassword"
-    ? "bg-slate-500"
-    : "bg-red-400";
+  const bgColor =
+    type === "create"
+      ? "bg-badirStar"
+      : type === "update"
+      ? "bg-slate-500"
+      : type === "resetPassword"
+      ? "bg-slate-500"
+      : "bg-red-400";
 
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] =
+    useState(false);
 
   const Form = () => {
     if (
@@ -454,33 +511,41 @@ const bgColor =
 
       return (
         <DeleteForm
-          table={table as keyof typeof deleteActionMap}
+          table={
+            table as keyof typeof deleteActionMap
+          }
           id={id}
           setOpen={setOpen}
         />
       );
     }
 
-     if (
-        type === "resetPassword" &&
-        id &&
-        ["admin", "teacher", "parent", "student"].includes(table)
-      ) {
-        return (
-          <ResetPasswordForm
-            table={table as
+    if (
+      type === "resetPassword" &&
+      id &&
+      [
+        "admin",
+        "teacher",
+        "parent",
+        "student",
+      ].includes(table)
+    ) {
+      return (
+        <ResetPasswordForm
+          table={
+            table as
               | "admin"
               | "teacher"
               | "parent"
-              | "student"}
-            id={String(id)}
-            name={data?.name ?? ""}
-            surname={data?.surname ?? ""}
-            setOpen={setOpen}
-          />
-        );
-      }
-
+              | "student"
+          }
+          id={String(id)}
+          name={data?.name ?? ""}
+          surname={data?.surname ?? ""}
+          setOpen={setOpen}
+        />
+      );
+    }
 
     if (
       type === "create" ||
@@ -504,10 +569,15 @@ const bgColor =
         title="Reset Password"
         aria-label="Reset Password"
         className={`${size} flex items-center justify-center rounded-full ${bgColor}`}
-        onClick={() => setOpen(true)}
+        onClick={() =>
+          setOpen(true)
+        }
       >
-       {type === "resetPassword" ? (
-          <span className="text-base" title="Reset Password">
+        {type === "resetPassword" ? (
+          <span
+            className="text-base"
+            title="Reset Password"
+          >
             🔐
           </span>
         ) : (
@@ -528,7 +598,9 @@ const bgColor =
             <button
               type="button"
               className="absolute top-4 right-4 z-50 bg-white rounded-full p-1 hover:bg-gray-100"
-              onClick={() => setOpen(false)}
+              onClick={() =>
+                setOpen(false)
+              }
             >
               <Image
                 src="/close.png"
@@ -551,4 +623,3 @@ const bgColor =
 };
 
 export default FormModal;
-

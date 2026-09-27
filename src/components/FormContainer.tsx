@@ -17,7 +17,9 @@ export type FormContainerProps = {
     | "attendance"
     | "event"
     | "announcement"
-    | "reportCard";
+    | "reportCard"
+    | "promotionPolicy"
+    | "academicYear";
   type: "create" | "update" | "delete" | "resetPassword";
   data?: any;
   id?: number | string;
@@ -393,6 +395,28 @@ const FormContainer = async ({
 
         break;
       }
+      case "promotionPolicy": {
+        const promotionPolicyAcademicYears =
+          await prisma.academicYear.findMany({
+            select: {
+              id: true,
+              name: true,
+            },
+            orderBy: {
+              startDate: "desc",
+            },
+          });
+
+        relatedData = {
+          academicYears: promotionPolicyAcademicYears,
+        };
+
+        break;
+      }
+      case "academicYear": {
+          relatedData = {};
+          break;
+        }
 
       default:
         break;

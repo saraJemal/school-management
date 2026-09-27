@@ -1,6 +1,5 @@
 "use client";
 
-
 import { useForm } from "react-hook-form";
 import InputField from "../InputField";
 import { classSchema, ClassSchema } from "@/lib/formValidationSchemas";

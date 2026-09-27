@@ -38,14 +38,16 @@ const AdminForm = ({
       name: data?.name ?? "",
       middleName: data?.middleName ?? "",
       surname: data?.surname ?? "",
-
+      isManagingDirector:
+        data?.isManagingDirector ?? false,
     },
   });
 
   const router = useRouter();
 
-  const onSubmit = handleSubmit(async (formData) => {
-    console.log("ADMIN FORM SUBMIT:", formData);
+  const onSubmit = handleSubmit(
+  async (formData) => {
+    console.log("ADMIN FORM SUBMIT SUCCESS:", formData);
 
     try {
       const result =
@@ -70,7 +72,9 @@ const AdminForm = ({
       if (result.success) {
         toast.success(
           `Admin has been ${
-            type === "create" ? "created" : "updated"
+            type === "create"
+              ? "created"
+              : "updated"
           }!`
         );
 
@@ -82,7 +86,9 @@ const AdminForm = ({
             "You are not authorized to perform this action."
           );
         } else if (result.error === "admin-id-exists") {
-          toast.error("An admin with this ID already exists.");
+          toast.error(
+            "An admin with this ID already exists."
+          );
         } else if (result.error === "admin-not-found") {
           toast.error("Admin was not found.");
         } else if (result.error === "clerk-user-not-linked") {
@@ -92,7 +98,9 @@ const AdminForm = ({
         } else {
           toast.error(
             `Failed to ${
-              type === "create" ? "create" : "update"
+              type === "create"
+                ? "create"
+                : "update"
             } admin.`
           );
         }
@@ -102,11 +110,20 @@ const AdminForm = ({
 
       toast.error(
         `Failed to ${
-          type === "create" ? "create" : "update"
+          type === "create"
+            ? "create"
+            : "update"
         } admin.`
       );
     }
-  });
+  },
+  (errors) => {
+    console.log(
+      "ADMIN FORM VALIDATION ERRORS:",
+      errors
+    );
+  }
+);
 
   return (
     <form
@@ -125,17 +142,17 @@ const AdminForm = ({
 
       <div className="flex justify-between flex-wrap gap-4">
         {type === "update" && (
-            <InputField
-              label="Admin ID"
-              name="id"
-              register={register}
-              error={errors?.id}
-              defaultValue={data?.id}
-              inputProps={{
-                readOnly: true,
-              }}
-            />
-          )}
+          <InputField
+            label="Admin ID"
+            name="id"
+            register={register}
+            error={errors?.id}
+            defaultValue={data?.id}
+            inputProps={{
+              readOnly: true,
+            }}
+          />
+        )}
 
         <InputField
           label="First Name"
@@ -144,6 +161,7 @@ const AdminForm = ({
           register={register}
           error={errors?.name}
         />
+
         <InputField
           label="Middle Name"
           name="middleName"
@@ -151,6 +169,7 @@ const AdminForm = ({
           register={register}
           error={errors?.middleName}
         />
+
         <InputField
           label="Last Name"
           name="surname"
@@ -158,6 +177,24 @@ const AdminForm = ({
           register={register}
           error={errors?.surname}
         />
+      </div>
+
+      {/* MANAGING DIRECTOR */}
+
+      <div className="flex items-center gap-3">
+        <input
+          type="checkbox"
+          id="isManagingDirector"
+          {...register("isManagingDirector")}
+          className="h-4 w-4 cursor-pointer"
+        />
+
+        <label
+          htmlFor="isManagingDirector"
+          className="text-sm font-medium text-gray-700 cursor-pointer"
+        >
+          Managing Director
+        </label>
       </div>
 
       <span className="text-sm text-gray-400 font-medium">
@@ -188,7 +225,9 @@ const AdminForm = ({
         type="submit"
         className="bg-badirBlue text-white p-2 rounded-md"
       >
-        {type === "create" ? "Create" : "Update"}
+        {type === "create"
+          ? "Create"
+          : "Update"}
       </button>
     </form>
   );

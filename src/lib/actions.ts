@@ -1,7 +1,7 @@
 "use server"
 import crypto from "crypto";
 import { revalidatePath } from "next/cache";
-import { AdminSchema, AssessmentRowSchema, AssessmentSchema, AttendanceSchema, ClassSchema, LessonSchema, ParentSchema, ReportCardSchema, StudentEnrollmentSchema, StudentResultsSchema, StudentSchema, SubjectSchema, TeacherSchema } from "./formValidationSchemas"
+import { AcademicYearSchema, AdminSchema, AssessmentRowSchema, AssessmentSchema, AttendanceSchema, ClassSchema, LessonSchema, ParentSchema, PromotionPolicySchema, ReportCardSchema, StudentEnrollmentSchema, StudentResultsSchema, StudentSchema, SubjectSchema, TeacherSchema } from "./formValidationSchemas"
 import { prisma } from "./prisma";
 import { auth, clerkClient } from "@clerk/nextjs/server";
 import { success } from "zod";
@@ -1290,6 +1290,7 @@ export const createAdmin = async (
         name: data.name,
         middleName: data.middleName || null,
         surname: data.surname,
+         isManagingDirector: data.isManagingDirector,
       },
     });
 
@@ -1380,14 +1381,12 @@ export const updateAdmin = async (
         username: data.username,
         firstName: data.name,
         lastName: data.surname,
-        ...(data.password !== "" &&
-          data.password !== undefined && {
-            password: data.password,
-          }),
       }
     );
 
     // Update the database record using the database ID
+
+    console.log("UPDATE ADMIN - isManagingDirector:", data.isManagingDirector);
     await prisma.admin.update({
       where: {
         id: data.id,
@@ -1397,6 +1396,7 @@ export const updateAdmin = async (
         name: data.name,
         middleName: data.middleName || null,
         surname: data.surname,
+         isManagingDirector: data.isManagingDirector === true,
         clerkUserId: user.id,
       },
     });
@@ -4394,3 +4394,208 @@ export const deleteStudentEnrollment = async (
   }
 };
 
+ // Create Promotion Policy
+export const createPromotionPolicy = async (
+  currentState: CurrentState,
+  data: PromotionPolicySchema
+) => {
+  try {
+    await prisma.promotionPolicy.create({
+      data: {
+        academicYearId: data.academicYearId,
+        section: data.section,
+        promotionMinimumAverage: data.promotionMinimumAverage,
+        detentionMaximumAverage: data.detentionMaximumAverage,
+      },
+    });
+
+    return { success: true, error: false };
+  } catch (err) {
+    console.log(err);
+    return { success: false, error: true };
+  }
+};
+
+
+// Update Promotion Policy
+export const updatePromotionPolicy = async (
+  currentState: CurrentState,
+  data: PromotionPolicySchema
+) => {
+  try {
+    await prisma.promotionPolicy.update({
+      where: {
+        id: data.id,
+      },
+      data: {
+        academicYearId: data.academicYearId,
+        section: data.section,
+        promotionMinimumAverage: data.promotionMinimumAverage,
+        detentionMaximumAverage: data.detentionMaximumAverage,
+      },
+    });
+
+    return { success: true, error: false };
+  } catch (err) {
+    console.log(err);
+    return { success: false, error: true };
+  }
+};
+
+
+// Delete Promotion Policy
+export const deletePromotionPolicy = async (
+  currentState: CurrentState,
+  data: FormData
+) => {
+  const id = data.get("id") as string;
+
+  try {
+    await prisma.promotionPolicy.delete({
+      where: {
+        id: parseInt(id),
+      },
+    });
+
+    return { success: true, error: false };
+  } catch (err) {
+    console.log(err);
+    return { success: false, error: true };
+  }
+};
+
+//----------------------------Academic Year Actions-----------------------------
+
+export const createAcademicYear = async (
+  currentState: CurrentState,
+  data: AcademicYearSchema
+) => {
+  try {
+    await prisma.$transaction(async (tx) => {
+      if (data.isCurrent) {
+        await tx.academicYear.updateMany({
+          data: {
+            isCurrent: false,
+          },
+        });
+      }
+
+      await tx.academicYear.create({
+        data: {
+          name: data.name,
+          startDate: data.startDate,
+          endDate: data.endDate,
+          semester1StartDate:
+            data.semester1StartDate,
+          semester1EndDate:
+            data.semester1EndDate,
+          semester2StartDate:
+            data.semester2StartDate,
+          semester2EndDate:
+            data.semester2EndDate,
+          isCurrent: data.isCurrent,
+        },
+      });
+    });
+
+    return {
+      success: true,
+      error: false,
+    };
+  } catch (err) {
+    console.log(err);
+
+    return {
+      success: false,
+      error: true,
+    };
+  }
+};
+
+export const updateAcademicYear = async (
+  currentState: CurrentState,
+  data: AcademicYearSchema
+) => {
+  try {
+    if (!data.id) {
+      return {
+        success: false,
+        error: true,
+      };
+    }
+
+    await prisma.$transaction(async (tx) => {
+      if (data.isCurrent) {
+        await tx.academicYear.updateMany({
+          where: {
+            id: {
+              not: data.id,
+            },
+          },
+          data: {
+            isCurrent: false,
+          },
+        });
+      }
+
+      await tx.academicYear.update({
+        where: {
+          id: data.id,
+        },
+        data: {
+          name: data.name,
+          startDate: data.startDate,
+          endDate: data.endDate,
+          semester1StartDate:
+            data.semester1StartDate,
+          semester1EndDate:
+            data.semester1EndDate,
+          semester2StartDate:
+            data.semester2StartDate,
+          semester2EndDate:
+            data.semester2EndDate,
+          isCurrent: data.isCurrent,
+        },
+      });
+    });
+
+    return {
+      success: true,
+      error: false,
+    };
+  } catch (err) {
+    console.log(err);
+
+    return {
+      success: false,
+      error: true,
+    };
+  }
+};
+
+export const deleteAcademicYear = async (
+  currentState: CurrentState,
+  data: FormData
+) => {
+  const id = data.get("id") as string;
+
+  try {
+    await prisma.academicYear.delete({
+      where: {
+        id: parseInt(id),
+      },
+    });
+
+    return {
+      success: true,
+      error: false,
+    };
+  } catch (err) {
+    console.log(err);
+
+    return {
+      success: false,
+      error: true,
+    };
+  }
+};

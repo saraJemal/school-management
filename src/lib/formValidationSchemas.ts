@@ -373,7 +373,8 @@ export type ParentSchema = z.infer<typeof parentSchema>;
 
 //----------------Admin Schema----------------
 export const adminSchema = z.object({
-   id: z.string().optional(),
+  id: z.string().optional(),
+
   username: z
     .string()
     .min(3, {
@@ -391,7 +392,9 @@ export const adminSchema = z.object({
     .max(30, {
       message: "First name must be at most 30 characters long!",
     }),
+
   middleName: z.string().optional(),
+
   surname: z
     .string()
     .min(2, {
@@ -406,10 +409,14 @@ export const adminSchema = z.object({
     .min(8, {
       message: "Password must be at least 8 characters long!",
     })
-    .or(z.literal("")),
+    .or(z.literal(""))
+    .optional(),
+
+  isManagingDirector: z.boolean().default(false),
 });
 
 export type AdminSchema = z.infer<typeof adminSchema>;
+
 
  //------------------StudentEnrollmentSchema---------------------------
 
@@ -434,3 +441,160 @@ export const StudentEnrollmentSchema = z.object({
 });
 
 export type StudentEnrollmentSchema = z.infer<typeof StudentEnrollmentSchema>;
+
+//------------------Promotion Policy Schema---------------------------
+
+export const promotionPolicySchema = z.object({
+  id: z.coerce.number().optional(),
+
+  academicYearId: z.coerce.number().min(1, {
+    message: "Academic year is required!",
+  }),
+
+  section: z.enum([
+    "KG",
+    "PRIMARY",
+    "MIDDLE",
+    "SECONDARY",
+    "PREPARATORY",
+  ], {
+    message: "Section is required!",
+  }),
+
+  promotionMinimumAverage: z.coerce
+    .number()
+    .min(0, {
+      message: "Promotion minimum average cannot be less than 0!",
+    })
+    .max(100, {
+      message: "Promotion minimum average cannot exceed 100!",
+    }),
+
+  detentionMaximumAverage: z.coerce
+    .number()
+    .min(0, {
+      message: "Detention maximum average cannot be less than 0!",
+    })
+    .max(100, {
+      message: "Detention maximum average cannot exceed 100!",
+    }),
+});
+
+export type PromotionPolicySchema = z.infer<typeof promotionPolicySchema>;
+
+//------------------Academic Year Schema---------------------------
+
+export const academicYearSchema = z
+  .object({
+    id: z.coerce.number().optional(),
+
+    name: z
+      .string()
+      .min(1, {
+        message: "Academic year name is required!",
+      })
+      .regex(/^\d{4}\/\d{4}$/, {
+        message: "Use the format YYYY/YYYY, for example 2026/2027.",
+      }),
+
+    startDate: z.coerce.date({
+      message: "Academic year start date is required!",
+    }),
+
+    endDate: z.coerce.date({
+      message: "Academic year end date is required!",
+    }),
+
+    semester1StartDate: z.coerce.date({
+      message: "Semester 1 start date is required!",
+    }),
+
+    semester1EndDate: z.coerce.date({
+      message: "Semester 1 end date is required!",
+    }),
+
+    semester2StartDate: z.coerce.date({
+      message: "Semester 2 start date is required!",
+    }),
+
+    semester2EndDate: z.coerce.date({
+      message: "Semester 2 end date is required!",
+    }),
+
+    isCurrent: z.coerce.boolean().default(false),
+  })
+  .superRefine((data, ctx) => {
+    if (data.startDate >= data.endDate) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["endDate"],
+        message:
+          "Academic year end date must be after the start date.",
+      });
+    }
+
+    if (data.semester1StartDate >= data.semester1EndDate) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["semester1EndDate"],
+        message:
+          "Semester 1 end date must be after its start date.",
+      });
+    }
+
+    if (data.semester2StartDate >= data.semester2EndDate) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["semester2EndDate"],
+        message:
+          "Semester 2 end date must be after its start date.",
+      });
+    }
+
+    if (data.semester1StartDate < data.startDate) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["semester1StartDate"],
+        message:
+          "Semester 1 cannot start before the academic year.",
+      });
+    }
+
+    if (data.semester1EndDate > data.endDate) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["semester1EndDate"],
+        message:
+          "Semester 1 cannot end after the academic year.",
+      });
+    }
+
+    if (data.semester2StartDate < data.startDate) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["semester2StartDate"],
+        message:
+          "Semester 2 cannot start before the academic year.",
+      });
+    }
+
+    if (data.semester2EndDate > data.endDate) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["semester2EndDate"],
+        message:
+          "Semester 2 cannot end after the academic year.",
+      });
+    }
+
+    if (data.semester1EndDate >= data.semester2StartDate) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["semester2StartDate"],
+        message:
+          "Semester 2 must start after Semester 1 ends.",
+      });
+    }
+  });
+
+export type AcademicYearSchema = z.infer< typeof academicYearSchema>;
