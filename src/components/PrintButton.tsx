@@ -1,13 +1,17 @@
 "use client";
 
-const PrintButton = () => {
+const PrintButton = ({
+  label = "Print Report Card",
+}: {
+  label?: string;
+}) => {
   return (
     <button
       type="button"
       onClick={() => window.print()}
-      className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 print:hidden"
+      className="rounded-md bg-badirStar px-4 py-2 text-sm font-medium text-white hover:bg-gray-100 hover:text-black print:hidden"
     >
-      Print Report Card
+      {label}
     </button>
   );
 };

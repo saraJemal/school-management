@@ -18,9 +18,9 @@ model Admin {
   isManagingDirector            Boolean      @default(false)
   reportCardsAsManagingDirector ReportCard[]
 
-  sentMessages        Message[]             @relation("AdminSentMessages")
-  receivedMessages    MessageRecipient[]    @relation("AdminMessageRecipients")
-  performanceAnalyses PerformanceAnalysis[]
+  sentMessages               Message[]             @relation("AdminSentMessages")
+  receivedMessages           MessageRecipient[]    @relation("AdminMessageRecipients")
+  performanceAnalysesCreated PerformanceAnalysis[] @relation("PerformanceAnalysisCreatedByAdmin")
 }
 
 model Student {
@@ -46,8 +46,9 @@ model Student {
   enrollments StudentEnrollment[]
   reportCards ReportCard[]
 
-  communicationBooks  CommunicationBook[]
-  performanceAnalyses PerformanceAnalysis[]
+  communicationBooks           CommunicationBook[]
+  weeklyProgressReports        WeeklyProgressReport[]
+  performanceAnalysisSnapshots PerformanceAnalysisStudent[]
 }
 
 model Teacher {
@@ -73,8 +74,9 @@ model Teacher {
   subjects           Subject[]            @relation("SubjectToTeacher")
   ReportCardSemester ReportCardSemester[]
 
-  sentMessages     Message[]          @relation("TeacherSentMessages")
-  receivedMessages MessageRecipient[] @relation("TeacherMessageRecipients")
+  sentMessages               Message[]             @relation("TeacherSentMessages")
+  receivedMessages           MessageRecipient[]    @relation("TeacherMessageRecipients")
+  performanceAnalysesCreated PerformanceAnalysis[] @relation("PerformanceAnalysisCreatedByTeacher")
 }
 
 model Parent {
@@ -128,8 +130,9 @@ model AcademicYear {
   reportCards       ReportCard[]
   promotionPolicies PromotionPolicy[]
 
-  communicationBooks  CommunicationBook[]
-  performanceAnalyses PerformanceAnalysis[]
+  communicationBooks    CommunicationBook[]
+  weeklyProgressReports WeeklyProgressReport[]
+  performanceAnalyses   PerformanceAnalysis[]
 }
 
 model ReportCard {
@@ -245,8 +248,9 @@ model Class {
   resultSubmissions ResultSubmission[]
   enrollments       StudentEnrollment[]
 
-  communicationBooks  CommunicationBook[]
-  performanceAnalyses PerformanceAnalysis[]
+  communicationBooks    CommunicationBook[]
+  weeklyProgressReports WeeklyProgressReport[]
+  performanceAnalyses   PerformanceAnalysis[]
 }
 
 model Subject {
@@ -258,8 +262,8 @@ model Subject {
   sections          SubjectSection[]   @relation("SubjectToSection")
   teachers          Teacher[]          @relation("SubjectToTeacher")
 
-  communicationBookSubjects   CommunicationBookSubject[]
-  performanceAnalysisSubjects PerformanceAnalysisSubject[]
+  communicationBookSubjects CommunicationBookSubject[]
+  performanceAnalyses       PerformanceAnalysis[]
 }
 
 model SubjectSection {
@@ -302,19 +306,20 @@ model StudentAssessment {
 }
 
 model ResultSubmission {
-  id             Int                    @id @default(autoincrement())
-  academicYearId Int
-  classId        Int
-  subjectId      Int
-  semester       Semester
-  status         ResultSubmissionStatus @default(DRAFT)
-  submittedAt    DateTime?
-  submittedById  String?
-  resetAt        DateTime?
-  resetById      String?
-  academicYear   AcademicYear           @relation(fields: [academicYearId], references: [id])
-  class          Class                  @relation(fields: [classId], references: [id])
-  subject        Subject                @relation(fields: [subjectId], references: [id])
+  id                  Int                    @id @default(autoincrement())
+  academicYearId      Int
+  classId             Int
+  subjectId           Int
+  semester            Semester
+  status              ResultSubmissionStatus @default(DRAFT)
+  submittedAt         DateTime?
+  submittedById       String?
+  resetAt             DateTime?
+  resetById           String?
+  performanceAnalyses PerformanceAnalysis[]
+  academicYear        AcademicYear           @relation(fields: [academicYearId], references: [id])
+  class               Class                  @relation(fields: [classId], references: [id])
+  subject             Subject                @relation(fields: [subjectId], references: [id])
 
   @@unique([academicYearId, classId, subjectId, semester])
 }
@@ -408,8 +413,6 @@ model CommunicationBook {
 
   subjects CommunicationBookSubject[]
 
-  weeklyProgressReport WeeklyProgressReport?
-
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -437,9 +440,13 @@ model CommunicationBookSubject {
 }
 
 model WeeklyProgressReport {
-  id Int @id @default(autoincrement())
+  id             Int    @id @default(autoincrement())
+  studentId      String
+  academicYearId Int
+  classId        Int
 
-  communicationBookId Int @unique
+  weekStart DateTime
+  weekEnd   DateTime
 
   teacherComment   String?
   teacherName      String?
@@ -449,21 +456,27 @@ model WeeklyProgressReport {
   parentName      String?
   parentSignature String?
 
-  communicationBook CommunicationBook @relation(fields: [communicationBookId], references: [id], onDelete: Cascade)
+  student      Student      @relation(fields: [studentId], references: [id])
+  academicYear AcademicYear @relation(fields: [academicYearId], references: [id])
+  class        Class        @relation(fields: [classId], references: [id])
 
   items WeeklyProgressItem[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@unique([studentId, academicYearId, weekStart])
+  @@index([studentId, academicYearId])
+  @@index([classId, weekStart])
 }
 
 model WeeklyProgressItem {
-  id Int @id @default(autoincrement())
-
+  id                     Int @id @default(autoincrement())
   weeklyProgressReportId Int
-  criterion              String
-  category               String
-  rating                 ProgressRating
+
+  criterion String
+  category  String
+  rating    ProgressRating
 
   weeklyProgressReport WeeklyProgressReport @relation(fields: [weeklyProgressReportId], references: [id], onDelete: Cascade)
 
@@ -516,74 +529,149 @@ model PerformanceAnalysis {
   academicYearId Int
   semester       Semester
 
-  // Analysis target
-  studentId String?
-  classId   Int?
-  gradeId   Int?
+  // What level is being analyzed?
+  level PerformanceAnalysisLevel
+
+  // Analysis scope
   section   GradeSection?
+  gradeId   Int?
+  classId   Int?
+  subjectId Int?
 
-  // Historical target snapshot
-  studentName String?
-  className   String?
-  gradeName   String?
+  // Is this an individual assessment or overall /100?
+  assessmentScope PerformanceAnalysisAssessmentScope
+  assessmentType  AssessmentType?
 
-  // Historical calculated results
-  studentCount Int @default(0)
-  maleCount    Int @default(0)
-  femaleCount  Int @default(0)
+  // Historical scope snapshot
+  resultSubmissionId Int?
+  summary            PerformanceAnalysisSummary?
+  sectionName        String?
+  gradeName          String?
+  className          String?
+  subjectName        String?
 
-  overallAverage Float?
-  highestAverage Float?
-  lowestAverage  Float?
+  // Historical assessment snapshot
+  assessmentTitle    String?
+  assessmentMaxScore Float?
+  assessmentWeight   Float?
 
-  // Historical analysis/comment
-  analysisTitle   String?
-  analysisComment String?
+  // Who created the analysis?
+  createdByAdminId   String?
+  createdByTeacherId String?
 
-  // Who created/saved the analysis
-  createdById String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt DateTime @default(now())
 
-  academicYear AcademicYear @relation(fields: [academicYearId], references: [id])
-  student      Student?     @relation(fields: [studentId], references: [id], onDelete: SetNull)
-  class        Class?       @relation(fields: [classId], references: [id], onDelete: SetNull)
-  grade        Grade?       @relation(fields: [gradeId], references: [id], onDelete: SetNull)
-  createdBy    Admin?       @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  students PerformanceAnalysisStudent[]
 
-  subjects PerformanceAnalysisSubject[]
+  assessmentDefinitions PerformanceAnalysisAssessment[]
+
+  academicYear     AcademicYear      @relation(fields: [academicYearId], references: [id])
+  grade            Grade?            @relation(fields: [gradeId], references: [id], onDelete: SetNull)
+  class            Class?            @relation(fields: [classId], references: [id], onDelete: SetNull)
+  subject          Subject?          @relation(fields: [subjectId], references: [id], onDelete: SetNull)
+  resultSubmission ResultSubmission? @relation(fields: [resultSubmissionId], references: [id], onDelete: SetNull)
+  createdByAdmin   Admin?            @relation("PerformanceAnalysisCreatedByAdmin", fields: [createdByAdminId], references: [id], onDelete: SetNull)
+  createdByTeacher Teacher?          @relation("PerformanceAnalysisCreatedByTeacher", fields: [createdByTeacherId], references: [id], onDelete: SetNull)
 
   @@index([academicYearId, semester])
-  @@index([studentId])
-  @@index([classId])
-  @@index([gradeId])
+  @@index([level])
   @@index([section])
-  @@index([createdById])
+  @@index([gradeId])
+  @@index([classId])
+  @@index([subjectId])
+  @@index([assessmentType])
+  @@index([resultSubmissionId])
+  @@index([createdByAdminId])
+  @@index([createdByTeacherId])
 }
 
-model PerformanceAnalysisSubject {
+model PerformanceAnalysisSummary {
   id Int @id @default(autoincrement())
 
-  performanceAnalysisId Int
-  subjectId             Int
+  performanceAnalysisId Int @unique
 
-  studentCount Int @default(0)
+  totalStudents Int
+  totalMale     Int
+  totalFemale   Int
 
-  averageScore Float?
-  highestScore Float?
-  lowestScore  Float?
+  excellentMale   Int
+  excellentFemale Int
+  excellentTotal  Int
 
-  maleAverage   Float?
-  femaleAverage Float?
+  veryGoodMale   Int
+  veryGoodFemale Int
+  veryGoodTotal  Int
 
-  comment String?
+  averageMale   Int
+  averageFemale Int
+  averageTotal  Int
+
+  poorMale   Int
+  poorFemale Int
+  poorTotal  Int
+
+  failMale   Int
+  failFemale Int
+  failTotal  Int
 
   performanceAnalysis PerformanceAnalysis @relation(fields: [performanceAnalysisId], references: [id], onDelete: Cascade)
 
-  subject Subject @relation(fields: [subjectId], references: [id])
+  @@index([performanceAnalysisId])
+}
 
-  @@unique([performanceAnalysisId, subjectId])
-  @@index([subjectId])
+model PerformanceAnalysisAssessment {
+  id Int @id @default(autoincrement())
+
+  performanceAnalysisId Int
+
+  assessmentId Int?
+
+  // Historical grade information
+  gradeId   Int?
+  gradeName String?
+
+  // Historical assessment definition
+  assessmentType  AssessmentType
+  assessmentTitle String
+  maxScore        Float
+  weight          Float
+  category        AssessmentCategory
+
+  performanceAnalysis PerformanceAnalysis @relation(fields: [performanceAnalysisId], references: [id], onDelete: Cascade)
+
+  @@index([performanceAnalysisId])
+}
+
+model PerformanceAnalysisStudent {
+  id Int @id @default(autoincrement())
+
+  performanceAnalysisId Int
+  studentId             String
+
+  // Historical student information
+  studentName String
+  sex         UserSex
+
+  // Historical enrollment information
+  gradeName  String
+  className  String
+  rollNumber Int
+
+  // Historical score information
+  score           Float
+  maxScore        Float
+  normalizedScore Float
+
+  // Historical performance classification
+  category PerformanceCategory
+
+  performanceAnalysis PerformanceAnalysis @relation(fields: [performanceAnalysisId], references: [id], onDelete: Cascade)
+  student             Student             @relation(fields: [studentId], references: [id], onDelete: NoAction)
+
+  @@index([performanceAnalysisId])
+  @@index([studentId])
+  @@index([category])
+  @@index([sex])
 }
 
 enum UserSex {
@@ -650,5 +738,26 @@ enum ProgressRating {
   EXCELLENT
   VERY_GOOD
   GOOD
+  SATISFACTORY
   NEEDS_IMPROVEMENT
+}
+
+enum PerformanceCategory {
+  EXCELLENT
+  VERY_GOOD
+  AVERAGE
+  POOR
+  FAIL
+}
+
+enum PerformanceAnalysisLevel {
+  CLASS
+  GRADE
+  SECTION
+  SCHOOL
+}
+
+enum PerformanceAnalysisAssessmentScope {
+  ASSESSMENT
+  OVERALL
 }

@@ -26,11 +26,11 @@ const AttendanceChart = ({
           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#ddd" />
           <XAxis
             dataKey="name"
-            axisLine={false}
-            tick={{ fill: "#d1d5db" }}
+            axisLine={true}
+            tick={{ fill: "darkgray" }}
             tickLine={false}
           />
-          <YAxis axisLine={false} tick={{ fill: "#d1d5db" }} tickLine={false} />
+          <YAxis axisLine={true} tick={{ fill: "darkgray" }} tickLine={false} />
           <Tooltip
             contentStyle={{ borderRadius: "10px", borderColor: "lightgray" }}
           />

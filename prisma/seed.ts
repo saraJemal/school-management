@@ -354,49 +354,52 @@ for (let i = 0; i < 14; i++) {
     },
   });
 }
-
 const teachers = await prisma.teacher.findMany();
 
   console.log("Teachers done");
 
-  // ------------------ LESSONS
+// ------------------ LESSONS
 
-  await prisma.lesson.createMany({
-    data: Array.from({ length: 30 }).map((_, i) => ({
+await prisma.lesson.deleteMany({
+  where: {
+    name: {
+      startsWith: "Lesson-",
+    },
+  },
+});
+
+await prisma.lesson.createMany({
+  data: Array.from({ length: 30 }).map((_, i) => {
+    const day = [
+      Day.MONDAY,
+      Day.TUESDAY,
+      Day.WEDNESDAY,
+      Day.THURSDAY,
+      Day.FRIDAY,
+    ][i % 5];
+
+    const startHour = 8 + (i % 8);
+
+    const startTime = new Date();
+    startTime.setHours(startHour, 0, 0, 0);
+
+    const endTime = new Date(startTime);
+    endTime.setHours(startHour + 1, 0, 0, 0);
+
+    return {
       name: `Lesson-${i + 1}`,
-      day: Day[
-        Object.keys(Day)[
-          Math.floor(
-            Math.random() * Object.keys(Day).length
-          )
-        ] as keyof typeof Day
-      ],
-      startTime: new Date(
-        new Date().setHours(
-          new Date().getHours() + 1
-        )
-      ),
-      endTime: new Date(
-        new Date().setHours(
-          new Date().getHours() + 3
-        )
-      ),
-      subjectId:
-        subjects[i % subjects.length].id,
-      classId:
-        classes[i % classes.length].id,
-      teacherId:
-        teachers[i % teachers.length].id,
-    })),
-    skipDuplicates: true,
-  });
+      day,
+      startTime,
+      endTime,
+      subjectId: subjects[i % subjects.length].id,
+      classId: classes[i % classes.length].id,
+      teacherId: teachers[i % teachers.length].id,
+    };
+  }),
+});
 
-  const lessons = await prisma.lesson.findMany();
-
-  console.log("Lessons done");
-
+console.log("Lessons recreated with corrected weekdays and times");
   // ------------------ PARENTS
-
   await prisma.parent.createMany({
     data: Array.from({ length: 25 }).map(
       (_, i) => ({

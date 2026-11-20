@@ -1541,7 +1541,7 @@ export default function ReportCardForm({
 
             <p className="mt-1 text-xs text-gray-500">
               Parent name is automatically taken
-              from the student's parent record.
+              from the student&apos;s parent record.
             </p>
           </div>
 
@@ -1576,8 +1576,8 @@ export default function ReportCardForm({
 
           <p className="mt-1 text-xs text-gray-500">
             Promotion or detention is automatically
-            determined from the school's promotion
-            policy and the student's annual result.
+            determined from the school&apos;s promotion
+            policy and the student&apos;s annual result.
           </p>
         </div>
       </section>

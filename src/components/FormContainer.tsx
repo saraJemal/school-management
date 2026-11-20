@@ -19,10 +19,15 @@ export type FormContainerProps = {
     | "announcement"
     | "reportCard"
     | "promotionPolicy"
-    | "academicYear";
-  type: "create" | "update" | "delete" | "resetPassword";
+    | "academicYear"
+    | "communicationBook"
+    | "weeklyProgress"
+    | "message"
+    | "performanceAnalysis";
+  type: "create" | "update" | "delete" | "resetPassword"| "view";
   data?: any;
   id?: number | string;
+  mode?: "teacher" | "parent";
 };
 
 const FormContainer = async ({
@@ -30,6 +35,7 @@ const FormContainer = async ({
   type,
   data,
   id,
+  mode,
 }: FormContainerProps) => {
   let relatedData = {};
 
@@ -37,7 +43,7 @@ const FormContainer = async ({
   const role = (sessionClaims?.metadata as { role?: string })?.role;
   const currentUserId = userId;
 
-  if (type !== "delete") {
+  if (type !== "delete" && type !== "view") {
     switch (table) {
       case "admin":
         relatedData = {};
@@ -417,7 +423,412 @@ const FormContainer = async ({
           relatedData = {};
           break;
         }
+      case "communicationBook": {
+        /*
+         * Communication Book related data
+         *
+         * The form needs:
+         * - academic years
+         * - students
+         * - classes
+         * - subjects belonging to the student's enrolled grade
+         *
+         * Role is intentionally NOT passed to the form.
+         * Authorization remains in the server action through auth().
+         */
 
+        const communicationBookAcademicYears =
+          await prisma.academicYear.findMany({
+            select: {
+              id: true,
+              name: true,
+              isCurrent: true,
+            },
+            orderBy: {
+              startDate: "desc",
+            },
+          });
+
+        /*
+         * Determine the student/year context.
+         *
+         * For an existing Communication Book these values come
+         * directly from the record.
+         *
+         * For a new record they can come from the page/context
+         * passed through data.
+         */
+        const communicationBookStudentId =
+          data?.studentId ??
+          data?.student?.id ??
+          data?.communicationBook?.studentId;
+
+        const communicationBookAcademicYearId =
+          data?.academicYearId ??
+          data?.academicYear?.id ??
+          data?.communicationBook?.academicYearId;
+
+        const communicationBookClassId =
+          data?.classId ??
+          data?.class?.id ??
+          data?.communicationBook?.classId;
+
+        /*
+         * Load students.
+         *
+         * This allows the CommunicationBookForm to display/select
+         * the student when creating a new record.
+         */
+        const communicationBookStudents =
+          await prisma.student.findMany({
+            select: {
+              id: true,
+              name: true,
+              surname: true,
+            },
+            orderBy: [
+              { name: "asc" },
+              { surname: "asc" },
+            ],
+          });
+
+        /*
+         * Load classes.
+         *
+         * Teachers only receive their homeroom classes.
+         * Admin receives all classes.
+         */
+        let communicationBookTeacherId: string | undefined;
+
+        if (role === "teacher" && userId) {
+          const communicationBookTeacher =
+            await prisma.teacher.findUnique({
+              where: {
+                clerkUserId: userId,
+              },
+              select: {
+                id: true,
+              },
+            });
+
+          communicationBookTeacherId =
+            communicationBookTeacher?.id;
+        }
+
+        const communicationBookClasses =
+          await prisma.class.findMany({
+            where: {
+              ...(role === "teacher" && communicationBookTeacherId
+                ? {
+                    homeRoomTeacherId:
+                      communicationBookTeacherId,
+                  }
+                : {}),
+            },
+            select: {
+              id: true,
+              name: true,
+              gradeId: true,
+              grade: {
+                select: {
+                  id: true,
+                  name: true,
+                  level: true,
+                  section: true,
+                },
+              },
+            },
+            orderBy: {
+              name: "asc",
+            },
+          });
+
+        /*
+         * Find the student's enrollment for the selected
+         * academic year.
+         *
+         * StudentEnrollment is the source of the student's
+         * current grade/class information.
+         */
+        let communicationBookEnrollment = null;
+
+        if (
+          communicationBookStudentId &&
+          communicationBookAcademicYearId
+        ) {
+          communicationBookEnrollment =
+            await prisma.studentEnrollment.findUnique({
+              where: {
+                studentId_academicYearId: {
+                  studentId: communicationBookStudentId,
+                  academicYearId:
+                    Number(communicationBookAcademicYearId),
+                },
+              },
+              select: {
+                studentId: true,
+                academicYearId: true,
+                classId: true,
+                rollNumber: true,
+                class: {
+                  select: {
+                    id: true,
+                    name: true,
+                    grade: {
+                      select: {
+                        id: true,
+                        name: true,
+                        level: true,
+                        section: true,
+                      },
+                    },
+                  },
+                },
+              },
+            });
+        }
+
+        /*
+         * The student's grade/section determines which
+         * SubjectSections are applicable.
+         *
+         * Example:
+         * Grade 1 PRIMARY → subjects whose SubjectSection
+         * has section PRIMARY.
+         */
+        let communicationBookSubjects: {
+          id: number;
+          name: string;
+        }[] = [];
+
+        const selectedGrade =
+          communicationBookEnrollment?.class?.grade ??
+          (communicationBookClassId
+            ? communicationBookClasses.find(
+                (classItem) =>
+                  classItem.id ===
+                  Number(communicationBookClassId)
+              )?.grade
+            : undefined);
+
+        if (selectedGrade?.section) {
+          communicationBookSubjects =
+            await prisma.subject.findMany({
+              where: {
+                sections: {
+                  some: {
+                    section: selectedGrade.section,
+                  },
+                },
+              },
+              select: {
+                id: true,
+                name: true,
+              },
+              orderBy: {
+                name: "asc",
+              },
+            });
+        }
+
+        relatedData = {
+          academicYears:
+            communicationBookAcademicYears,
+
+          students:
+            communicationBookStudents,
+
+          classes:
+            communicationBookClasses,
+
+          subjects:
+            communicationBookSubjects,
+
+          enrollment:
+            communicationBookEnrollment,
+        };
+
+        break;
+      }
+
+      case "weeklyProgress": {
+        const studentId = data?.studentId;
+        const academicYearId = data?.academicYearId;
+        const classId = data?.classId;
+
+        let canEditTeacher = false;
+        let canEditParent = false;
+
+        if (studentId && academicYearId && classId) {
+          const enrollment =
+            await prisma.studentEnrollment.findUnique({
+              where: {
+                studentId_academicYearId: {
+                  studentId,
+                  academicYearId,
+                },
+              },
+              include: {
+                class: {
+                  select: {
+                    id: true,
+                    homeRoomTeacher: {
+                      select: {
+                        clerkUserId: true,
+                      },
+                    },
+                  },
+                },
+                student: {
+                  select: {
+                    parent: {
+                      select: {
+                        clerkUserId: true,
+                      },
+                    },
+                  },
+                },
+              },
+            });
+
+          if (enrollment && enrollment.classId === classId) {
+            // ----------------------------------------------------------
+            // TEACHER SECTION
+            // Admin can edit.
+            // Relevant homeroom teacher can edit.
+            // ----------------------------------------------------------
+            canEditTeacher =
+              role === "admin" ||
+              (role === "teacher" &&
+                enrollment.class.homeRoomTeacher?.clerkUserId ===
+                  currentUserId);
+
+            // ----------------------------------------------------------
+            // PARENT SECTION
+            // Admin can edit.
+            // Relevant parent can edit.
+            // ----------------------------------------------------------
+            canEditParent =
+              role === "admin" ||
+              (role === "parent" &&
+                enrollment.student.parent?.clerkUserId ===
+                  currentUserId);
+          }
+        }
+
+        relatedData = {
+          studentId,
+          academicYearId,
+          classId,
+          canEditTeacher,
+          canEditParent,
+        };
+
+        break;
+      }
+
+      case "message":
+        const messageAdmins = await prisma.admin.findMany({
+          select: {
+            id: true,
+            username: true,
+            name: true,
+            surname: true,
+          },
+          orderBy: {
+            username: "asc",
+          },
+        });
+
+        const messageTeachers = await prisma.teacher.findMany({
+          select: {
+            id: true,
+            name: true,
+            surname: true,
+          },
+          orderBy: [
+            {
+              name: "asc",
+            },
+            {
+              surname: "asc",
+            },
+          ],
+        });
+
+        relatedData = {
+          admins: messageAdmins,
+          teachers: messageTeachers,
+        };
+
+        break;
+
+            // ----------------------------------------------------------
+      // PERFORMANCE ANALYSIS
+      // ----------------------------------------------------------
+      case "performanceAnalysis": {
+        const performanceAnalysisAcademicYears =
+          await prisma.academicYear.findMany({
+            select: {
+              id: true,
+              name: true,
+              isCurrent: true,
+            },
+            orderBy: {
+              startDate: "desc",
+            },
+          });
+
+        const performanceAnalysisGrades =
+          await prisma.grade.findMany({
+            select: {
+              id: true,
+              level: true,
+              name: true,
+              section: true,
+            },
+            orderBy: {
+              level: "asc",
+            },
+          });
+
+        const performanceAnalysisClasses =
+          await prisma.class.findMany({
+            select: {
+              id: true,
+              name: true,
+              gradeId: true,
+            },
+            orderBy: {
+              name: "asc",
+            },
+          });
+
+        const performanceAnalysisSubjects =
+          await prisma.subject.findMany({
+            select: {
+              id: true,
+              name: true,
+              sections: {
+                select: {
+                  section: true,
+                },
+              },
+            },
+            orderBy: {
+              name: "asc",
+            },
+          });
+
+        relatedData = {
+          academicYears: performanceAnalysisAcademicYears,
+          grades: performanceAnalysisGrades,
+          classes: performanceAnalysisClasses,
+          subjects: performanceAnalysisSubjects,
+        };
+
+        break;
+      }
       default:
         break;
     }
@@ -431,6 +842,7 @@ const FormContainer = async ({
         data={data}
         id={id}
         relatedData={relatedData}
+        mode={mode}
       />
     </div>
   );

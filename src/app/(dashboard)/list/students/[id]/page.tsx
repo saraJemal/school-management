@@ -215,7 +215,7 @@ const SingleStudentPage = async ({
 
               <div>
                 <h1 className="text-xl font-semibold">
-                  {studentClass.name.charAt(0)}th
+                  {studentClass.name.charAt(0)}
                 </h1>
 
                 <span className="text-sm text-gray-400">
@@ -269,7 +269,7 @@ const SingleStudentPage = async ({
         </div>
 
         {/* Bottom */}
-        <div className="mt-4 bg-white rounded-md p-4 h-[800px]">
+        <div className="mt-4 bg-white rounded-md p-4 h-[550px]">
           <h1>Student&apos;s Schedule</h1>
 
           <BigCalendarContainer

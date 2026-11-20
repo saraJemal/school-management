@@ -598,3 +598,431 @@ export const academicYearSchema = z
   });
 
 export type AcademicYearSchema = z.infer< typeof academicYearSchema>;
+
+//------------------Communication Book Schema---------------------------
+
+
+export const communicationBookSchema = z.object({
+  id: z.coerce.number().optional(),
+
+  studentId: z.string().min(1, {
+    message: "Student is required!",
+  }),
+
+  academicYearId: z.coerce.number().min(1, {
+    message: "Academic year is required!",
+  }),
+
+  classId: z.coerce.number().min(1, {
+    message: "Class is required!",
+  }),
+
+  date: z.coerce.date(),
+
+  dailyWord: z.string().optional(),
+
+  characterTrait: z.string().optional(),
+
+  teacherComment: z.string().optional(),
+
+  teacherName: z.string().optional(),
+
+  teacherSignature: z.string().optional(),
+
+  parentComment: z.string().optional(),
+
+  parentName: z.string().optional(),
+
+  parentSignature: z.string().optional(),
+
+  subjects: z.array(
+    z.object({
+      id: z.coerce.number().optional(),
+
+      subjectId: z.coerce.number().min(1, {
+        message: "Subject is required!",
+      }),
+
+      homeworkInstruction: z.string().optional(),
+
+      asp: z.string().optional(),
+
+      parentSignature: z.string().optional(),
+    })
+  ),
+});
+
+export type CommunicationBookSchema = z.infer<
+  typeof communicationBookSchema
+>;
+
+//---------------------Weekly Progress Schema------------------------
+
+export const weeklyProgressSchema = z.object({
+  id: z.coerce.number().optional(),
+
+  studentId: z.string().min(1, {
+    message: "Student is required!",
+  }),
+
+  academicYearId: z.coerce.number().min(1, {
+    message: "Academic year is required!",
+  }),
+
+  classId: z.coerce.number().min(1, {
+    message: "Class is required!",
+  }),
+
+  weekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, {
+    message: "Week start is required!",
+  }),
+
+  weekEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, {
+    message: "Week end is required!",
+  }),
+
+  teacherComment: z.string().optional(),
+  teacherName: z.string().optional(),
+  teacherSignature: z.string().optional(),
+
+  parentComment: z.string().optional(),
+  parentName: z.string().optional(),
+  parentSignature: z.string().optional(),
+
+  // ----------------------------------------------------------
+  // WEEKLY PROGRESS ITEMS
+  //
+  // Exactly 11 criteria:
+  //
+  // 1. Academic Performance
+  // 2. Behaviour Evaluation
+  // 3-11. Socialization and Work Ethics
+  // ----------------------------------------------------------
+
+  items: z
+    .array(
+      z.object({
+        id: z.coerce.number().optional(),
+
+        criterion: z.string().min(1, {
+          message: "Criterion is required!",
+        }),
+
+        category: z.string().min(1, {
+          message: "Category is required!",
+        }),
+
+        rating: z.enum([
+          "EXCELLENT",
+          "VERY_GOOD",
+          "GOOD",
+          "SATISFACTORY",
+          "NEEDS_IMPROVEMENT",
+        ]),
+      })
+    )
+    .length(11, {
+      message:
+        "Weekly Progress must contain exactly 11 evaluation criteria.",
+    }),
+});
+
+export type WeeklyProgressSchema = z.infer<
+  typeof weeklyProgressSchema
+>;
+
+//-----------------------------Message Schema----------------------------
+
+export const messageSchema = z.object({
+  id: z.coerce.number().optional(),
+
+  recipientIds: z
+    .array(z.string())
+    .min(1, { message: "At least one recipient is required!" }),
+
+  subject: z
+    .string()
+    .trim()
+    .min(1, { message: "Subject is required!" })
+    .max(200, { message: "Subject is too long!" }),
+
+  body: z
+    .string()
+    .trim()
+    .min(1, { message: "Message body is required!" }),
+});
+
+export type MessageSchema = z.infer<typeof messageSchema>;
+
+//------------------Performance Analysis Schema---------------------------
+
+export const performanceAnalysisSchema = z
+  .object({
+    id: z.preprocess(
+      (value) =>
+        value === "" ||
+        value === null ||
+        value === undefined
+          ? undefined
+          : value,
+      z.coerce.number().positive().optional()
+    ),
+
+    academicYearId: z.preprocess(
+      (value) =>
+        value === "" ||
+        value === null ||
+        value === undefined
+          ? undefined
+          : value,
+      z.coerce.number().positive({
+        message: "Academic year is required!",
+      })
+    ),
+
+    semester: z.enum(
+      ["SEMESTER1", "SEMESTER2"],
+      {
+        message: "Semester is required!",
+      }
+    ),
+
+    level: z.enum(
+      ["CLASS", "GRADE", "SECTION", "SCHOOL"],
+      {
+        message: "Analysis level is required!",
+      }
+    ),
+
+    section: z.preprocess(
+      (value) =>
+        value === "" ||
+        value === null ||
+        value === undefined
+          ? undefined
+          : value,
+      z
+        .enum([
+          "KG",
+          "PRIMARY",
+          "MIDDLE",
+          "SECONDARY",
+          "PREPARATORY",
+        ])
+        .optional()
+    ),
+
+    gradeId: z.preprocess(
+      (value) =>
+        value === "" ||
+        value === null ||
+        value === undefined
+          ? undefined
+          : value,
+      z.coerce.number().positive().optional()
+    ),
+
+    classId: z.preprocess(
+      (value) =>
+        value === "" ||
+        value === null ||
+        value === undefined
+          ? undefined
+          : value,
+      z.coerce.number().positive().optional()
+    ),
+
+    subjectId: z.preprocess(
+      (value) =>
+        value === "" ||
+        value === null ||
+        value === undefined
+          ? undefined
+          : value,
+      z.coerce.number().positive({
+        message: "Subject is required!",
+      })
+    ),
+
+    assessmentScope: z.enum(
+      ["ASSESSMENT", "OVERALL"],
+      {
+        message: "Assessment scope is required!",
+      }
+    ),
+
+    assessmentType: z.preprocess(
+      (value) =>
+        value === "" ||
+        value === null ||
+        value === undefined
+          ? undefined
+          : value,
+      z
+        .enum([
+          "Q1",
+          "Q2",
+          "TEST1",
+          "TEST2",
+          "MIDTERM",
+          "FINAL",
+        ])
+        .optional()
+    ),
+  })
+  .superRefine((data, ctx) => {
+    /*
+     * ------------------------------------------------------------
+     * CLASS LEVEL
+     * ------------------------------------------------------------
+     *
+     * Class analysis needs:
+     *   Section
+     *   Grade
+     *   Class
+     *   Subject
+     */
+
+    if (data.level === "CLASS") {
+      if (!data.section) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["section"],
+          message:
+            "Section is required for class analysis!",
+        });
+      }
+
+      if (!data.gradeId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["gradeId"],
+          message:
+            "Grade is required for class analysis!",
+        });
+      }
+
+      if (!data.classId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["classId"],
+          message:
+            "Class is required for class analysis!",
+        });
+      }
+    }
+
+    /*
+     * ------------------------------------------------------------
+     * GRADE LEVEL
+     * ------------------------------------------------------------
+     *
+     * Grade analysis needs:
+     *   Section
+     *   Grade
+     *   Subject
+     *
+     * Class must NOT be required.
+     */
+
+    if (data.level === "GRADE") {
+      if (!data.section) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["section"],
+          message:
+            "Section is required for grade analysis!",
+        });
+      }
+
+      if (!data.gradeId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["gradeId"],
+          message:
+            "Grade is required for grade analysis!",
+        });
+      }
+    }
+
+    /*
+     * ------------------------------------------------------------
+     * SECTION LEVEL
+     * ------------------------------------------------------------
+     *
+     * Section analysis needs:
+     *   Section
+     *   Subject
+     *
+     * Grade and Class must NOT be required.
+     */
+
+    if (data.level === "SECTION") {
+      if (!data.section) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["section"],
+          message:
+            "Section is required for section analysis!",
+        });
+      }
+    }
+
+    /*
+     * ------------------------------------------------------------
+     * SCHOOL LEVEL
+     * ------------------------------------------------------------
+     *
+     * School analysis needs only:
+     *   Subject
+     *
+     * Section, Grade and Class must NOT be required.
+     */
+
+    if (data.level === "SCHOOL") {
+      // No section/grade/class validation.
+    }
+
+    /*
+     * ------------------------------------------------------------
+     * ASSESSMENT SCOPE
+     * ------------------------------------------------------------
+     */
+
+    if (
+      data.assessmentScope === "ASSESSMENT" &&
+      !data.assessmentType
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["assessmentType"],
+        message:
+          "Assessment type is required!",
+      });
+    }
+
+    /*
+     * ------------------------------------------------------------
+     * OVERALL SCOPE
+     * ------------------------------------------------------------
+     *
+     * Overall analysis represents the final /100 result,
+     * so it must not contain an individual assessment type.
+     */
+
+    if (
+      data.assessmentScope === "OVERALL" &&
+      data.assessmentType
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["assessmentType"],
+        message:
+          "Assessment type must be empty for overall analysis!",
+      });
+    }
+  });
+
+export type PerformanceAnalysisSchema = z.infer<
+  typeof performanceAnalysisSchema
+>;

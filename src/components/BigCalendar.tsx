@@ -1,3 +1,4 @@
+
 "use client";
 
 import { Calendar, momentLocalizer, View, Views } from "react-big-calendar";
@@ -30,8 +31,8 @@ const BigCalendar = ({
       date={currentDate}
       style={{ height: "98%" }}
       onView={handleOnChangeView}
-      min={new Date(0, 0, 0, 8, 0, 0)}
-      max={new Date(0, 0, 0, 17, 0, 0)}
+      min={new Date(2000, 0, 1, 8, 0, 0)}
+      max={new Date(2000, 0, 1, 17, 0, 0)}
     />
   );
 };

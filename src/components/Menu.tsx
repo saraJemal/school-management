@@ -14,7 +14,7 @@ const menuItems = [
       },
       {
         icon: "/profile.png",
-        label: "Adminstrators",
+        label: "Administrators",
         href: "/list/admins",
         visible: ["admin"],
       },
@@ -64,7 +64,7 @@ const menuItems = [
         icon: "/exam.png",
         label: "Assessments",
         href: "/list/assessments",
-        visible: ["admin", "teacher", "student", "parent"],
+        visible: ["admin", "teacher"],
       },
       {
         icon: "/result.png",
@@ -82,7 +82,7 @@ const menuItems = [
         icon: "/result.png",
         label: "Report Cards",
         href: "/list/report-cards",
-        visible: ["admin", "teacher", "student", "parent"],
+        visible: ["admin", "teacher"],
       },
       {
         icon: "/attendance.png",
@@ -106,13 +106,23 @@ const menuItems = [
         icon: "/message.png",
         label: "Messages",
         href: "/list/messages",
-        visible: ["admin", "teacher", "student", "parent"],
+        visible: ["admin", "teacher"],
       },
       {
         icon: "/announcement.png",
         label: "Announcements",
         href: "/list/announcements",
         visible: ["admin", "teacher", "student", "parent"],
+      },
+      { icon: "/calendar.png",
+        label: "Communication Book",
+        href: "/list/communication-book",
+        visible: ["admin", "teacher", "parent"],
+      },
+      { icon: "/result.png",
+        label: "Performance Analysis",
+        href: "/list/performance-analysis",
+        visible: ["admin", "teacher"],
       },
       {
         icon: "/calendar.png",
@@ -146,10 +156,8 @@ const menuItems = [
     ],
   },
 ];
-
 const Menu = async () => {
   const { sessionClaims } = auth();
-
   const role = (sessionClaims?.metadata as {
     role?: string;
   })?.role ?? "";
@@ -175,5 +183,4 @@ const Menu = async () => {
     </div>
   );
 };
-
 export default Menu;

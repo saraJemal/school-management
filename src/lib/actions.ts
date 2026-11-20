@@ -1,11 +1,17 @@
 "use server"
 import crypto from "crypto";
 import { revalidatePath } from "next/cache";
-import { AcademicYearSchema, AdminSchema, AssessmentRowSchema, AssessmentSchema, AttendanceSchema, ClassSchema, LessonSchema, ParentSchema, PromotionPolicySchema, ReportCardSchema, StudentEnrollmentSchema, StudentResultsSchema, StudentSchema, SubjectSchema, TeacherSchema } from "./formValidationSchemas"
+import { AcademicYearSchema, AdminSchema, AssessmentRowSchema, AttendanceSchema, ClassSchema, CommunicationBookSchema, LessonSchema, MessageSchema, ParentSchema, PerformanceAnalysisSchema, PromotionPolicySchema, ReportCardSchema, StudentEnrollmentSchema, StudentResultsSchema, StudentSchema, SubjectSchema, TeacherSchema, WeeklyProgressSchema, communicationBookSchema, performanceAnalysisSchema } from "./formValidationSchemas"
 import { prisma } from "./prisma";
 import { auth, clerkClient } from "@clerk/nextjs/server";
-import { success } from "zod";
-import { AssessmentCategory, AssessmentType, Semester } from "@prisma/client";
+import { AssessmentCategory, AssessmentType, GradeSection, Semester, UserSex } from "@prisma/client";
+import {
+  calculateDailyActivityResult,
+  calculateExamResult,
+  calculateFinalResult,
+  isRecordedScore,
+  roundResult,
+} from "@/lib/resultCalculation";
 
 type CurrentState = {
   success:boolean; 
@@ -1198,6 +1204,210 @@ export const updateReportCard = async (
   } catch (error) {
     console.error(
       "UPDATE REPORT CARD ERROR:",
+      error
+    );
+
+    return {
+      success: false,
+      error: true,
+    };
+  }
+};
+
+ // =========================================================
+// DELETE REPORT CARD
+// =========================================================
+//
+// Admin:
+//   Can delete any report card.
+//
+// Teacher:
+//   Can delete ONLY when they are the homeroom teacher
+//   of the student's class for this academic year.
+//
+// Student / Parent:
+//   Cannot delete.
+//
+// Related semester and basic-skill records are deleted
+// together with the report card.
+// =========================================================
+
+export const deleteReportCard = async (
+  currentState: CurrentState,
+  data: FormData
+) => {
+  const { userId, sessionClaims } = auth();
+
+  const role = (
+    sessionClaims?.metadata as {
+      role?: string;
+    }
+  )?.role;
+
+  try {
+    // ---------------------------------------------------------
+    // AUTHENTICATION
+    // ---------------------------------------------------------
+
+    if (!userId) {
+      return {
+        success: false,
+        error: "unauthorized",
+      };
+    }
+
+    if (role !== "admin" && role !== "teacher") {
+      return {
+        success: false,
+        error: "unauthorized",
+      };
+    }
+
+    // ---------------------------------------------------------
+    // VALIDATE REPORT CARD ID
+    // ---------------------------------------------------------
+
+    const idValue = data.get("id");
+
+    const reportCardId = Number(idValue);
+
+    if (!Number.isInteger(reportCardId) || reportCardId < 1) {
+      return {
+        success: false,
+        error: "invalid-report-card",
+      };
+    }
+
+    // ---------------------------------------------------------
+    // FIND REPORT CARD
+    // ---------------------------------------------------------
+
+    const reportCard =
+      await prisma.reportCard.findUnique({
+        where: {
+          id: reportCardId,
+        },
+        select: {
+          id: true,
+          studentId: true,
+          academicYearId: true,
+        },
+      });
+
+    if (!reportCard) {
+      return {
+        success: false,
+        error: "report-card-not-found",
+      };
+    }
+
+    // ---------------------------------------------------------
+    // FIND STUDENT ENROLLMENT
+    // ---------------------------------------------------------
+
+    const enrollment =
+      await prisma.studentEnrollment.findUnique({
+        where: {
+          studentId_academicYearId: {
+            studentId: reportCard.studentId,
+            academicYearId: reportCard.academicYearId,
+          },
+        },
+        select: {
+          class: {
+            select: {
+              homeRoomTeacherId: true,
+            },
+          },
+        },
+      });
+
+    if (!enrollment) {
+      return {
+        success: false,
+        error: "student-enrollment-not-found",
+      };
+    }
+
+    // ---------------------------------------------------------
+    // TEACHER AUTHORIZATION
+    // ---------------------------------------------------------
+
+    if (role === "teacher") {
+      const teacher =
+        await prisma.teacher.findUnique({
+          where: {
+            clerkUserId: userId,
+          },
+          select: {
+            id: true,
+          },
+        });
+
+      if (!teacher) {
+        return {
+          success: false,
+          error: "teacher-not-found",
+        };
+      }
+
+      // Teacher can delete only report cards belonging
+      // to their homeroom class.
+      if (
+        enrollment.class.homeRoomTeacherId !==
+        teacher.id
+      ) {
+        return {
+          success: false,
+          error: "unauthorized",
+        };
+      }
+    }
+
+    // ---------------------------------------------------------
+    // DELETE
+    // ---------------------------------------------------------
+
+    await prisma.$transaction(async (tx) => {
+      // Delete basic skills first.
+      await tx.reportCardBasicSkill.deleteMany({
+        where: {
+          reportCardId: reportCard.id,
+        },
+      });
+
+      // Delete semester records.
+      await tx.reportCardSemester.deleteMany({
+        where: {
+          reportCardId: reportCard.id,
+        },
+      });
+
+      // Finally delete the report card.
+      await tx.reportCard.delete({
+        where: {
+          id: reportCard.id,
+        },
+      });
+    });
+
+    // ---------------------------------------------------------
+    // REFRESH
+    // ---------------------------------------------------------
+
+    revalidatePath(
+      `/list/report-cards/${reportCard.studentId}`
+    );
+
+    revalidatePath("/list/report-cards");
+
+    return {
+      success: true,
+      error: false,
+    };
+  } catch (error) {
+    console.error(
+      "DELETE REPORT CARD ERROR:",
       error
     );
 
@@ -3708,8 +3918,14 @@ export const submitResult = async (data: {
 // SUBMITTED -> DRAFT
 //
 // The actual student scores are NOT deleted.
-// Reset only unlocks the submission so the teacher
-// can correct the results and submit them again.
+//
+// Reset:
+// 1. Unlocks the submission.
+// 2. Clears submittedAt.
+// 3. Invalidates the previously saved Overall Analysis.
+//
+// The individual Performance Analysis assessment records
+// are preserved.
 // =========================================================
 
 export const resetResultSubmission = async (
@@ -3791,15 +4007,35 @@ export const resetResultSubmission = async (
      * Admin can reset any submitted result.
      */
     if (role === "admin") {
-      await prisma.resultSubmission.update({
-        where: {
-          id: submissionId,
-        },
-        data: {
-          status: "DRAFT",
-          submittedAt: null,
-        },
-      });
+      await prisma.$transaction([
+        /*
+         * Invalidate the previously saved Overall Analysis
+         * for this exact ResultSubmission.
+         *
+         * The individual assessment analyses are preserved.
+         */
+        prisma.performanceAnalysis.deleteMany({
+          where: {
+            resultSubmissionId: submissionId,
+            assessmentScope: "OVERALL",
+          },
+        }),
+
+        /*
+         * Return the result submission to DRAFT.
+         *
+         * Student scores remain untouched.
+         */
+        prisma.resultSubmission.update({
+          where: {
+            id: submissionId,
+          },
+          data: {
+            status: "DRAFT",
+            submittedAt: null,
+          },
+        }),
+      ]);
 
       return {
         success: true,
@@ -3871,16 +4107,32 @@ export const resetResultSubmission = async (
      * ---------------------------------------------------------
      * RESET
      * ---------------------------------------------------------
+     *
+     * Invalidate only the Overall Analysis belonging
+     * to this exact ResultSubmission.
+     *
+     * Individual assessment analyses remain untouched.
+     *
+     * Student result scores remain untouched.
      */
-    await prisma.resultSubmission.update({
-      where: {
-        id: submissionId,
-      },
-      data: {
-        status: "DRAFT",
-        submittedAt: null,
-      },
-    });
+    await prisma.$transaction([
+      prisma.performanceAnalysis.deleteMany({
+        where: {
+          resultSubmissionId: submissionId,
+          assessmentScope: "OVERALL",
+        },
+      }),
+
+      prisma.resultSubmission.update({
+        where: {
+          id: submissionId,
+        },
+        data: {
+          status: "DRAFT",
+          submittedAt: null,
+        },
+      }),
+    ]);
 
     return {
       success: true,
@@ -4592,6 +4844,4893 @@ export const deleteAcademicYear = async (
     };
   } catch (err) {
     console.log(err);
+
+    return {
+      success: false,
+      error: true,
+    };
+  }
+};
+
+// ============================================================================
+// COMMUNICATION BOOK - SHARED SAVE LOGIC
+// ============================================================================
+
+const saveCommunicationBook = async (
+  data: CommunicationBookSchema
+) => {
+  const { userId, sessionClaims } = await auth();
+
+  if (!userId) {
+    return {
+      success: false,
+      error: "unauthorized",
+    };
+  }
+
+  const role = (
+    sessionClaims?.metadata as {
+      role?: string;
+    }
+  )?.role;
+
+  if (role !== "admin" && role !== "teacher") {
+    return {
+      success: false,
+      error: "unauthorized",
+    };
+  }
+
+  // ----------------------------------------------------------
+  // STUDENT ENROLLMENT
+  // ----------------------------------------------------------
+
+  const enrollment =
+    await prisma.studentEnrollment.findUnique({
+      where: {
+        studentId_academicYearId: {
+          studentId: data.studentId,
+          academicYearId: data.academicYearId,
+        },
+      },
+      select: {
+        studentId: true,
+        academicYearId: true,
+        classId: true,
+        rollNumber: true,
+        class: {
+          select: {
+            id: true,
+            name: true,
+            homeRoomTeacherId: true,
+            grade: {
+              select: {
+                id: true,
+                name: true,
+                level: true,
+                section: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+  if (!enrollment) {
+    return {
+      success: false,
+      error: "student-enrollment-not-found",
+    };
+  }
+
+  if (enrollment.classId !== data.classId) {
+    return {
+      success: false,
+      error: "invalid-student-class",
+    };
+  }
+
+  // ----------------------------------------------------------
+  // TEACHER AUTHORIZATION
+  // ----------------------------------------------------------
+
+  let teacherId: string | undefined;
+
+  if (role === "teacher") {
+    const teacher = await prisma.teacher.findUnique({
+      where: {
+        clerkUserId: userId,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!teacher) {
+      return {
+        success: false,
+        error: "teacher-not-found",
+      };
+    }
+
+    teacherId = teacher.id;
+
+    if (
+      enrollment.class.homeRoomTeacherId !==
+      teacher.id
+    ) {
+      return {
+        success: false,
+        error: "unauthorized",
+      };
+    }
+  }
+
+  // ----------------------------------------------------------
+  // ACADEMIC YEAR
+  // ----------------------------------------------------------
+
+  const academicYear =
+    await prisma.academicYear.findUnique({
+      where: {
+        id: data.academicYearId,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+  if (!academicYear) {
+    return {
+      success: false,
+      error: "academic-year-not-found",
+    };
+  }
+
+  // ----------------------------------------------------------
+  // ONLY SAVE SUBJECTS THAT HAVE HOMEWORK OR ASP
+  // ----------------------------------------------------------
+
+  const subjectsToSave = data.subjects.filter(
+    (subject) =>
+      Boolean(
+        subject.homeworkInstruction?.trim()
+      ) ||
+      Boolean(subject.asp?.trim())
+  );
+
+  // ----------------------------------------------------------
+  // DUPLICATE SUBJECT VALIDATION
+  // ----------------------------------------------------------
+
+  const submittedSubjectIds =
+    subjectsToSave.map(
+      (subject) => subject.subjectId
+    );
+
+  if (
+    new Set(submittedSubjectIds).size !==
+    submittedSubjectIds.length
+  ) {
+    return {
+      success: false,
+      error: "duplicate-subject",
+    };
+  }
+
+  // ----------------------------------------------------------
+  // SUBJECT VALIDATION
+  // ----------------------------------------------------------
+
+  const subjects =
+    submittedSubjectIds.length > 0
+      ? await prisma.subject.findMany({
+          where: {
+            id: {
+              in: submittedSubjectIds,
+            },
+          },
+          select: {
+            id: true,
+            name: true,
+            sections: {
+              select: {
+                section: true,
+              },
+            },
+          },
+        })
+      : [];
+
+  if (
+    subjects.length !==
+    submittedSubjectIds.length
+  ) {
+    return {
+      success: false,
+      error: "subject-not-found",
+    };
+  }
+
+  const gradeSection =
+    enrollment.class.grade.section;
+
+  const invalidSubject =
+    subjects.find(
+      (subject) =>
+        !subject.sections.some(
+          (subjectSection) =>
+            subjectSection.section ===
+            gradeSection
+        )
+    );
+
+  if (invalidSubject) {
+    return {
+      success: false,
+      error: "invalid-subject-for-grade",
+    };
+  }
+
+  // ----------------------------------------------------------
+  // TRANSACTION
+  // ----------------------------------------------------------
+
+  try {
+    const communicationBookId =
+      await prisma.$transaction(
+        async (tx) => {
+          let id: number;
+
+          // ----------------------------------------------------
+          // EXISTING RECORD
+          // ----------------------------------------------------
+
+          let existingSubjects:
+            {
+              subjectId: number;
+              parentSignature: string | null;
+            }[] = [];
+
+          if (data.id) {
+            const existing =
+              await tx.communicationBook.findUnique({
+                where: {
+                  id: data.id,
+                },
+                select: {
+                  id: true,
+                  studentId: true,
+                  academicYearId: true,
+                  classId: true,
+                  subjects: {
+                    select: {
+                      subjectId: true,
+                      parentSignature: true,
+                    },
+                  },
+                },
+              });
+
+            if (!existing) {
+              throw new Error(
+                "COMMUNICATION_BOOK_NOT_FOUND"
+              );
+            }
+
+            if (
+              existing.studentId !==
+                data.studentId ||
+              existing.academicYearId !==
+                data.academicYearId ||
+              existing.classId !== data.classId
+            ) {
+              throw new Error(
+                "COMMUNICATION_BOOK_CONTEXT_CANNOT_CHANGE"
+              );
+            }
+
+            existingSubjects =
+              existing.subjects;
+
+            // --------------------------------------------------
+            // TEACHER UPDATE
+            //
+            // Parent-controlled fields are intentionally
+            // preserved. They are changed only by the parent
+            // update action.
+            // --------------------------------------------------
+
+            const updated =
+              await tx.communicationBook.update({
+                where: {
+                  id: data.id,
+                },
+                data: {
+                  date: data.date,
+
+                  dailyWord:
+                    data.dailyWord?.trim() ||
+                    null,
+
+                  characterTrait:
+                    data.characterTrait?.trim() ||
+                    null,
+
+                  teacherComment:
+                    data.teacherComment?.trim() ||
+                    null,
+
+                  teacherName:
+                    data.teacherName?.trim() ||
+                    null,
+
+                  teacherSignature:
+                    data.teacherSignature?.trim() ||
+                    null,
+
+                  // DO NOT update:
+                  // parentComment
+                  // parentName
+                  // parentSignature
+                },
+                select: {
+                  id: true,
+                },
+              });
+
+            id = updated.id;
+          } else {
+            // --------------------------------------------------
+            // CREATE
+            // --------------------------------------------------
+
+            const created =
+              await tx.communicationBook.create({
+                data: {
+                  studentId:
+                    data.studentId,
+
+                  academicYearId:
+                    data.academicYearId,
+
+                  classId:
+                    data.classId,
+
+                  date: data.date,
+
+                  dailyWord:
+                    data.dailyWord?.trim() ||
+                    null,
+
+                  characterTrait:
+                    data.characterTrait?.trim() ||
+                    null,
+
+                  teacherComment:
+                    data.teacherComment?.trim() ||
+                    null,
+
+                  teacherName:
+                    data.teacherName?.trim() ||
+                    null,
+
+                  teacherSignature:
+                    data.teacherSignature?.trim() ||
+                    null,
+
+                  // Parent fields start empty.
+                  parentComment: null,
+                  parentName: null,
+                  parentSignature: null,
+                },
+
+                select: {
+                  id: true,
+                },
+              });
+
+            id = created.id;
+          }
+
+          // ----------------------------------------------------
+          // EXISTING PARENT SIGNATURES
+          // ----------------------------------------------------
+
+          const parentSignatureMap =
+            new Map<number, string | null>();
+
+          for (const item of existingSubjects) {
+            parentSignatureMap.set(
+              item.subjectId,
+              item.parentSignature
+            );
+          }
+
+          // ----------------------------------------------------
+          // REPLACE DAILY SUBJECT CONTENT
+          //
+          // Only subjects containing Homework or ASP survive.
+          // Parent signatures are restored for subjects that
+          // remain in the book.
+          // ----------------------------------------------------
+
+          await tx.communicationBookSubject.deleteMany({
+            where: {
+              communicationBookId: id,
+            },
+          });
+
+          if (subjectsToSave.length > 0) {
+            await tx.communicationBookSubject.createMany(
+              {
+                data: subjectsToSave.map(
+                  (subject) => ({
+                    communicationBookId: id,
+
+                    subjectId:
+                      subject.subjectId,
+
+                    homeworkInstruction:
+                      subject.homeworkInstruction?.trim() ||
+                      null,
+
+                    asp:
+                      subject.asp?.trim() ||
+                      null,
+
+                    parentSignature:
+                      parentSignatureMap.get(
+                        subject.subjectId
+                      ) ?? null,
+                  })
+                ),
+              }
+            );
+          }
+
+          return id;
+        }
+      );
+
+    revalidatePath(
+      "/list/communication-books"
+    );
+
+    return {
+      success: true,
+      error: false,
+      id: communicationBookId,
+    };
+  } catch (err: any) {
+    console.log(
+      "COMMUNICATION BOOK SAVE ERROR:",
+      err
+    );
+
+    if (
+      err?.message ===
+      "COMMUNICATION_BOOK_NOT_FOUND"
+    ) {
+      return {
+        success: false,
+        error: "communication-book-not-found",
+      };
+    }
+
+    if (
+      err?.message ===
+      "COMMUNICATION_BOOK_CONTEXT_CANNOT_CHANGE"
+    ) {
+      return {
+        success: false,
+        error:
+          "communication-book-context-cannot-change",
+      };
+    }
+
+    if (err?.code === "P2002") {
+      return {
+        success: false,
+        error:
+          "communication-book-already-exists",
+      };
+    }
+
+    return {
+      success: false,
+      error: true,
+    };
+  }
+};
+
+// ============================================================================
+// CREATE COMMUNICATION BOOK
+// ============================================================================
+
+export const createCommunicationBook = async (
+  currentState: CurrentState,
+  formData: FormData
+) => {
+  try {
+    const rawData = {
+      id: undefined,
+
+      studentId:
+        String(formData.get("studentId") ?? ""),
+
+      academicYearId:
+        formData.get("academicYearId"),
+
+      classId:
+        formData.get("classId"),
+
+      date:
+        formData.get("date"),
+
+      dailyWord:
+        String(formData.get("dailyWord") ?? ""),
+
+      characterTrait:
+        String(
+          formData.get("characterTrait") ?? ""
+        ),
+
+      teacherComment:
+        String(
+          formData.get("teacherComment") ?? ""
+        ),
+
+      teacherName:
+        String(
+          formData.get("teacherName") ?? ""
+        ),
+
+      teacherSignature:
+        String(
+          formData.get("teacherSignature") ?? ""
+        ),
+
+      parentComment:
+        String(
+          formData.get("parentComment") ?? ""
+        ),
+
+      parentName:
+        String(
+          formData.get("parentName") ?? ""
+        ),
+
+      parentSignature:
+        String(
+          formData.get("parentSignature") ?? ""
+        ),
+
+      subjects: JSON.parse(
+        String(formData.get("subjects") ?? "[]")
+      ),
+    };
+
+    const validatedData =
+      communicationBookSchema.safeParse(rawData);
+
+    if (!validatedData.success) {
+      console.log(
+        "COMMUNICATION BOOK VALIDATION ERROR:",
+        validatedData.error.flatten()
+      );
+
+      return {
+        success: false,
+        error: true,
+      };
+    }
+
+    return await saveCommunicationBook(
+      validatedData.data
+    );
+  } catch (err) {
+    console.log(
+      "CREATE COMMUNICATION BOOK ERROR:",
+      err
+    );
+
+    return {
+      success: false,
+      error: true,
+    };
+  }
+};
+
+// ============================================================================
+// UPDATE COMMUNICATION BOOK
+// ============================================================================
+
+export const updateCommunicationBook = async (
+  currentState: CurrentState,
+  formData: FormData
+) => {
+  try {
+    const rawId = formData.get("id");
+
+    const rawData = {
+      id: rawId,
+
+      studentId:
+        String(formData.get("studentId") ?? ""),
+
+      academicYearId:
+        formData.get("academicYearId"),
+
+      classId:
+        formData.get("classId"),
+
+      date:
+        formData.get("date"),
+
+      dailyWord:
+        String(formData.get("dailyWord") ?? ""),
+
+      characterTrait:
+        String(
+          formData.get("characterTrait") ?? ""
+        ),
+
+      teacherComment:
+        String(
+          formData.get("teacherComment") ?? ""
+        ),
+
+      teacherName:
+        String(
+          formData.get("teacherName") ?? ""
+        ),
+
+      teacherSignature:
+        String(
+          formData.get("teacherSignature") ?? ""
+        ),
+
+      parentComment:
+        String(
+          formData.get("parentComment") ?? ""
+        ),
+
+      parentName:
+        String(
+          formData.get("parentName") ?? ""
+        ),
+
+      parentSignature:
+        String(
+          formData.get("parentSignature") ?? ""
+        ),
+
+      subjects: JSON.parse(
+        String(formData.get("subjects") ?? "[]")
+      ),
+    };
+
+    const validatedData =
+      communicationBookSchema.safeParse(rawData);
+
+    if (!validatedData.success) {
+      console.log(
+        "COMMUNICATION BOOK UPDATE VALIDATION ERROR:",
+        validatedData.error.flatten()
+      );
+
+      return {
+        success: false,
+        error: true,
+      };
+    }
+
+    if (!validatedData.data.id) {
+      return {
+        success: false,
+        error: true,
+      };
+    }
+
+    return await saveCommunicationBook(
+      validatedData.data
+    );
+  } catch (err) {
+    console.log(
+      "UPDATE COMMUNICATION BOOK ERROR:",
+      err
+    );
+
+    return {
+      success: false,
+      error: true,
+    };
+  }
+};
+
+// ============================================================================
+// DELETE COMMUNICATION BOOK
+// ============================================================================
+
+export const deleteCommunicationBook = async (
+  currentState: CurrentState,
+  formData: FormData
+) => {
+  const rawId = formData.get("id");
+
+  const id = Number(rawId);
+
+  if (!id || Number.isNaN(id)) {
+    return {
+      success: false,
+      error: true,
+    };
+  }
+
+  try {
+    const { userId, sessionClaims } =
+      await auth();
+
+    if (!userId) {
+      return {
+        success: false,
+        error: "unauthorized",
+      };
+    }
+
+    const role = (
+      sessionClaims?.metadata as {
+        role?: string;
+      }
+    )?.role;
+
+    if (role !== "admin" && role !== "teacher") {
+      return {
+        success: false,
+        error: "unauthorized",
+      };
+    }
+
+    // ------------------------------------------------------------------------
+    // Find Communication Book and its homeroom teacher
+    // ------------------------------------------------------------------------
+
+    const communicationBook =
+      await prisma.communicationBook.findUnique({
+        where: {
+          id,
+        },
+        select: {
+          id: true,
+          class: {
+            select: {
+              homeRoomTeacherId: true,
+            },
+          },
+        },
+      });
+
+    if (!communicationBook) {
+      return {
+        success: false,
+        error: "communication-book-not-found",
+      };
+    }
+
+    // ------------------------------------------------------------------------
+    // Teacher authorization
+    // ------------------------------------------------------------------------
+
+    if (role === "teacher") {
+      const teacher =
+        await prisma.teacher.findUnique({
+          where: {
+            clerkUserId: userId,
+          },
+          select: {
+            id: true,
+          },
+        });
+
+      if (!teacher) {
+        return {
+          success: false,
+          error: "teacher-not-found",
+        };
+      }
+
+      if (
+        communicationBook.class
+          .homeRoomTeacherId !== teacher.id
+      ) {
+        return {
+          success: false,
+          error: "unauthorized",
+        };
+      }
+    }
+
+    // ------------------------------------------------------------------------
+    // Delete
+    // ------------------------------------------------------------------------
+
+    await prisma.communicationBook.delete({
+      where: {
+        id,
+      },
+    });
+
+    revalidatePath(
+      "/list/communication-book"
+    );
+
+    return {
+      success: true,
+      error: false,
+    };
+  } catch (err) {
+    console.log(
+      "DELETE COMMUNICATION BOOK ERROR:",
+      err
+    );
+
+    return {
+      success: false,
+      error: true,
+    };
+  }
+};
+
+
+export const updateCommunicationBookParent = async (
+  currentState: CurrentState,
+  formData: FormData
+) => {
+  try {
+    const { userId } = await auth();
+
+    if (!userId) {
+      return {
+        success: false,
+        error: "unauthorized",
+      };
+    }
+
+    const rawId = formData.get("id");
+    const id = Number(rawId);
+
+    if (!id || Number.isNaN(id)) {
+      return {
+        success: false,
+        error: true,
+      };
+    }
+
+    const communicationBook =
+      await prisma.communicationBook.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          studentId: true,
+          student: {
+            select: {
+              id: true,
+              parent: {
+                select: {
+                  id: true,
+                  clerkUserId: true,
+                  name: true,
+                  surname: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+    if (!communicationBook) {
+      return {
+        success: false,
+        error: "communication-book-not-found",
+      };
+    }
+
+    // Only the authenticated parent linked to this student may edit.
+    const parent = communicationBook.student.parent;
+
+    if (!parent || parent.clerkUserId !== userId) {
+      return {
+        success: false,
+        error: "unauthorized",
+      };
+    }
+
+    const parentComment = String(
+      formData.get("parentComment") ?? ""
+    ).trim();
+
+    const parentSignature = String(
+      formData.get("parentSignature") ?? ""
+    ).trim();
+
+    // Always use the name of the authenticated student's linked parent.
+    const parentName =
+      `${parent.name} ${parent.surname ?? ""}`.trim();
+
+    let subjectSignatures: {
+      subjectId: number;
+      parentSignature: string;
+    }[];
+
+    try {
+      const parsed: unknown = JSON.parse(
+        String(formData.get("subjectSignatures") ?? "[]")
+      );
+
+      if (!Array.isArray(parsed)) {
+        return {
+          success: false,
+          error: true,
+        };
+      }
+
+      subjectSignatures = parsed.filter(
+        (item): item is {
+          subjectId: number;
+          parentSignature: string;
+        } =>
+          item !== null &&
+          typeof item === "object" &&
+          Number.isInteger(Number(item.subjectId)) &&
+          Number(item.subjectId) > 0 &&
+          typeof item.parentSignature === "string"
+      );
+    } catch {
+      return {
+        success: false,
+        error: true,
+      };
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.communicationBook.update({
+        where: { id },
+        data: {
+          parentComment: parentComment || null,
+          parentName: parentName || null,
+          parentSignature: parentSignature || null,
+        },
+      });
+
+      // Only subjects with homework/instruction or ASP may receive
+      // parent signatures through this action.
+      const existingSubjects =
+        await tx.communicationBookSubject.findMany({
+          where: {
+            communicationBookId: id,
+            OR: [
+              {
+                homeworkInstruction: {
+                  not: null,
+                },
+              },
+              {
+                asp: {
+                  not: null,
+                },
+              },
+            ],
+          },
+          select: {
+            subjectId: true,
+            homeworkInstruction: true,
+            asp: true,
+          },
+        });
+
+      const eligibleSubjectIds = new Set(
+        existingSubjects
+          .filter(
+            (subject) =>
+              Boolean(subject.homeworkInstruction?.trim()) ||
+              Boolean(subject.asp?.trim())
+          )
+          .map((subject) => subject.subjectId)
+      );
+
+      // Ignore duplicate IDs and update only eligible subjects
+      // belonging to this communication book.
+      const processedSubjectIds = new Set<number>();
+
+      for (const item of subjectSignatures) {
+        const subjectId = Number(item.subjectId);
+
+        if (
+          !eligibleSubjectIds.has(subjectId) ||
+          processedSubjectIds.has(subjectId)
+        ) {
+          continue;
+        }
+
+        processedSubjectIds.add(subjectId);
+
+        await tx.communicationBookSubject.update({
+          where: {
+            communicationBookId_subjectId: {
+              communicationBookId: id,
+              subjectId,
+            },
+          },
+          data: {
+            parentSignature:
+              item.parentSignature.trim() || null,
+          },
+        });
+      }
+    });
+
+    revalidatePath("/list/communication-books");
+    revalidatePath(
+      `/list/communication-book/${communicationBook.studentId}`
+    );
+
+    return {
+      success: true,
+      error: false,
+    };
+  } catch (err) {
+    console.log(
+      "UPDATE COMMUNICATION BOOK PARENT ERROR:",
+      err
+    );
+
+    return {
+      success: false,
+      error: true,
+    };
+  }
+};
+
+
+//--------------------------WEEKLY PROGRESS ACTION----------------
+
+// CREATE
+const getExpectedWeekEnd = (weekStart: string) => {
+  const date = new Date(`${weekStart}T00:00:00.000Z`);
+
+  date.setUTCDate(date.getUTCDate() + 4);
+
+  return date;
+};
+
+export const createWeeklyProgress = async (
+  currentState: CurrentState,
+  data: WeeklyProgressSchema
+) => {
+  try {
+    const { userId, sessionClaims } = auth();
+
+    if (!userId) {
+      return {
+        success: false,
+        error: "unauthorized",
+      };
+    }
+
+    const role = (sessionClaims?.metadata as {
+      role?: string;
+    })?.role;
+
+    // Only admin and teacher can create a weekly progress report.
+    if (role !== "admin" && role !== "teacher") {
+      return {
+        success: false,
+        error: "unauthorized",
+      };
+    }
+
+    const enrollment =
+      await prisma.studentEnrollment.findUnique({
+        where: {
+          studentId_academicYearId: {
+            studentId: data.studentId,
+            academicYearId: data.academicYearId,
+          },
+        },
+        include: {
+          class: {
+            select: {
+              homeRoomTeacherId: true,
+            },
+          },
+        },
+      });
+
+    if (!enrollment) {
+      return {
+        success: false,
+        error: "student-enrollment-not-found",
+      };
+    }
+
+    // The supplied class must match the student's enrollment.
+    if (enrollment.classId !== data.classId) {
+      return {
+        success: false,
+        error: "unauthorized",
+      };
+    }
+
+    // ------------------------------------------------------
+    // TEACHER AUTHORIZATION
+    // ------------------------------------------------------
+
+    if (role === "teacher") {
+      const teacher = await prisma.teacher.findUnique({
+        where: {
+          clerkUserId: userId,
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      if (
+        !teacher ||
+        enrollment.class.homeRoomTeacherId !== teacher.id
+      ) {
+        return {
+          success: false,
+          error: "unauthorized",
+        };
+      }
+    }
+
+    // ------------------------------------------------------
+    // DATE HANDLING
+    // ------------------------------------------------------
+
+
+    const weekStart = new Date(
+  `${data.weekStart}T00:00:00.000Z`
+);
+
+const weekEnd = getExpectedWeekEnd(data.weekStart);
+
+if (
+  data.weekEnd !==
+  weekEnd.toISOString().slice(0, 10)
+) {
+  return {
+    success: false,
+    error: "invalid-week-range",
+  };
+}
+
+    // ------------------------------------------------------
+    // DUPLICATE CHECK
+    // ------------------------------------------------------
+
+    const existing =
+      await prisma.weeklyProgressReport.findUnique({
+        where: {
+          studentId_academicYearId_weekStart: {
+            studentId: data.studentId,
+            academicYearId: data.academicYearId,
+            weekStart,
+          },
+        },
+      });
+
+    if (existing) {
+      return {
+        success: false,
+        error: "weekly-progress-already-exists",
+      };
+    }
+
+    // ------------------------------------------------------
+    // CREATE
+    // ------------------------------------------------------
+
+    await prisma.weeklyProgressReport.create({
+      data: {
+        studentId: data.studentId,
+        academicYearId: data.academicYearId,
+        classId: data.classId,
+        weekStart,
+        weekEnd,
+
+        teacherComment:
+          data.teacherComment?.trim() || null,
+
+        teacherName:
+          data.teacherName?.trim() || null,
+
+        teacherSignature:
+          data.teacherSignature || null,
+
+        parentComment:
+          data.parentComment?.trim() || null,
+
+        parentName:
+          data.parentName?.trim() || null,
+
+        parentSignature:
+          data.parentSignature || null,
+
+        items: {
+          create: data.items.map((item) => ({
+            criterion: item.criterion,
+            category: item.category,
+            rating: item.rating,
+          })),
+        },
+      },
+    });
+
+    revalidatePath(
+      `/list/communication-book/${data.studentId}/weekly-progress`
+    );
+
+    return {
+      success: true,
+      error: false,
+    };
+  } catch (err) {
+    console.log(err);
+
+    return {
+      success: false,
+      error: true,
+    };
+  }
+};
+
+
+// UPDATE
+export const updateWeeklyProgress = async (
+  currentState: CurrentState,
+  data: WeeklyProgressSchema
+) => {
+  if (!data.id) {
+    return {
+      success: false,
+      error: true,
+    };
+  }
+
+  try {
+    const { userId, sessionClaims } = auth();
+
+    if (!userId) {
+      return {
+        success: false,
+        error: "unauthorized",
+      };
+    }
+
+    const role = (sessionClaims?.metadata as {
+      role?: string;
+    })?.role;
+
+    const existing =
+      await prisma.weeklyProgressReport.findUnique({
+        where: {
+          id: data.id,
+        },
+        include: {
+          student: {
+            include: {
+              parent: {
+                select: {
+                  clerkUserId: true,
+                },
+              },
+            },
+          },
+          class: {
+            select: {
+              homeRoomTeacherId: true,
+            },
+          },
+        },
+      });
+
+    if (!existing) {
+      return {
+        success: false,
+        error: "weekly-progress-not-found",
+      };
+    }
+
+    // ------------------------------------------------------
+    // TEACHER
+    // ------------------------------------------------------
+
+    if (role === "teacher") {
+      const teacher = await prisma.teacher.findUnique({
+        where: {
+          clerkUserId: userId,
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      if (
+        !teacher ||
+        existing.class.homeRoomTeacherId !== teacher.id
+      ) {
+        return {
+          success: false,
+          error: "unauthorized",
+        };
+      }
+
+      await prisma.$transaction([
+        prisma.weeklyProgressReport.update({
+          where: {
+            id: data.id,
+          },
+          data: {
+           weekEnd: getExpectedWeekEnd(data.weekStart),
+
+            teacherComment:
+              data.teacherComment?.trim() || null,
+
+            teacherName:
+              data.teacherName?.trim() || null,
+
+            teacherSignature:
+              data.teacherSignature || null,
+
+            // Teacher cannot modify parent fields.
+            parentComment:
+              existing.parentComment,
+
+            parentName:
+              existing.parentName,
+
+            parentSignature:
+              existing.parentSignature,
+          },
+        }),
+
+        prisma.weeklyProgressItem.deleteMany({
+          where: {
+            weeklyProgressReportId: data.id,
+          },
+        }),
+
+        prisma.weeklyProgressItem.createMany({
+          data: data.items.map((item) => ({
+            weeklyProgressReportId: data.id!,
+            criterion: item.criterion,
+            category: item.category,
+            rating: item.rating,
+          })),
+        }),
+      ]);
+    }
+
+    // ------------------------------------------------------
+    // PARENT
+    // ------------------------------------------------------
+
+    else if (role === "parent") {
+      if (
+        existing.student.parent?.clerkUserId !==
+        userId
+      ) {
+        return {
+          success: false,
+          error: "unauthorized",
+        };
+      }
+
+      await prisma.weeklyProgressReport.update({
+        where: {
+          id: data.id,
+        },
+        data: {
+          // Parent cannot modify teacher fields.
+          teacherComment:
+            existing.teacherComment,
+
+          teacherName:
+            existing.teacherName,
+
+          teacherSignature:
+            existing.teacherSignature,
+
+          parentComment:
+            data.parentComment?.trim() || null,
+
+          parentName:
+            data.parentName?.trim() || null,
+
+          parentSignature:
+            data.parentSignature || null,
+        },
+      });
+    }
+
+    // ------------------------------------------------------
+    // ADMIN
+    // ------------------------------------------------------
+
+    else if (role === "admin") {
+      // Admin can edit EVERYTHING:
+      // - ratings
+      // - teacher comment/name/signature
+      // - parent comment/name/signature
+
+      await prisma.$transaction([
+        prisma.weeklyProgressReport.update({
+          where: {
+            id: data.id,
+          },
+          data: {
+            weekEnd: new Date(
+              `${data.weekEnd}T00:00:00.000Z`
+            ),
+
+            teacherComment:
+              data.teacherComment?.trim() || null,
+
+            teacherName:
+              data.teacherName?.trim() || null,
+
+            teacherSignature:
+              data.teacherSignature || null,
+
+            parentComment:
+              data.parentComment?.trim() || null,
+
+            parentName:
+              data.parentName?.trim() || null,
+
+            parentSignature:
+              data.parentSignature || null,
+          },
+        }),
+
+        prisma.weeklyProgressItem.deleteMany({
+          where: {
+            weeklyProgressReportId: data.id,
+          },
+        }),
+
+        prisma.weeklyProgressItem.createMany({
+          data: data.items.map((item) => ({
+            weeklyProgressReportId: data.id!,
+            criterion: item.criterion,
+            category: item.category,
+            rating: item.rating,
+          })),
+        }),
+      ]);
+    }
+
+    // ------------------------------------------------------
+    // OTHER ROLES
+    // ------------------------------------------------------
+
+    else {
+      return {
+        success: false,
+        error: "unauthorized",
+      };
+    }
+
+    revalidatePath(
+      `/list/communication-book/${existing.studentId}/weekly-progress`
+    );
+
+    return {
+      success: true,
+      error: false,
+    };
+  } catch (err) {
+    console.log(err);
+
+    return {
+      success: false,
+      error: true,
+    };
+  }
+};
+
+
+// DELETE
+export const deleteWeeklyProgress = async (
+  currentState: CurrentState,
+  data: FormData
+) => {
+  const id = data.get("id") as string;
+
+  try {
+    const { userId, sessionClaims } = auth();
+
+    if (!userId) {
+      return {
+        success: false,
+        error: "unauthorized",
+      };
+    }
+
+    const role = (sessionClaims?.metadata as {
+      role?: string;
+    })?.role;
+
+    // Only admin and teacher can delete.
+    if (role !== "admin" && role !== "teacher") {
+      return {
+        success: false,
+        error: "unauthorized",
+      };
+    }
+
+    const report =
+      await prisma.weeklyProgressReport.findUnique({
+        where: {
+          id: parseInt(id),
+        },
+        include: {
+          class: {
+            select: {
+              homeRoomTeacherId: true,
+            },
+          },
+        },
+      });
+
+    if (!report) {
+      return {
+        success: false,
+        error: "weekly-progress-not-found",
+      };
+    }
+
+    // ------------------------------------------------------
+    // TEACHER DELETE AUTHORIZATION
+    // ------------------------------------------------------
+
+    if (role === "teacher") {
+      const teacher = await prisma.teacher.findUnique({
+        where: {
+          clerkUserId: userId,
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      if (
+        !teacher ||
+        report.class.homeRoomTeacherId !== teacher.id
+      ) {
+        return {
+          success: false,
+          error: "unauthorized",
+        };
+      }
+    }
+
+    // Admin can delete any Weekly Progress report.
+    await prisma.weeklyProgressReport.delete({
+      where: {
+        id: parseInt(id),
+      },
+    });
+
+    revalidatePath(
+      `/list/communication-book/${report.studentId}/weekly-progress`
+    );
+
+    return {
+      success: true,
+      error: false,
+    };
+  } catch (err) {
+    console.log(err);
+
+    return {
+      success: false,
+      error: true,
+    };
+  }
+};
+
+// ---------------------------------------------------------
+// SAVE WEEKLY PROGRESS PARENT SECTION
+// Reuses the existing WeeklyProgressForm.
+// ---------------------------------------------------------
+
+export const updateWeeklyProgressParent = async (
+  reportId: number,
+  parentComment: string,
+  parentSignature: string | null
+) => {
+  try {
+    const { userId, sessionClaims } = auth();
+
+    if (!userId) {
+      return {
+        success: false,
+        error: "unauthorized",
+      };
+    }
+
+    const role = (sessionClaims?.metadata as {
+      role?: string;
+    })?.role;
+
+    if (role !== "parent") {
+      return {
+        success: false,
+        error: "unauthorized",
+      };
+    }
+
+    if (!Number.isInteger(reportId) || reportId <= 0) {
+      return {
+        success: false,
+        error: "invalid-report",
+      };
+    }
+
+    const report =
+      await prisma.weeklyProgressReport.findUnique({
+        where: { id: reportId },
+        select: {
+          id: true,
+          studentId: true,
+          student: {
+            select: {
+              parent: {
+                select: {
+                  clerkUserId: true,
+                  name: true,
+                  surname: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+    if (!report) {
+      return {
+        success: false,
+        error: "weekly-progress-not-found",
+      };
+    }
+
+    const parent = report.student.parent;
+
+    if (!parent || parent.clerkUserId !== userId) {
+      return {
+        success: false,
+        error: "unauthorized",
+      };
+    }
+
+    const parentName = [
+      parent.name,
+      parent.surname,
+    ]
+      .filter(Boolean)
+      .join(" ");
+
+    await prisma.weeklyProgressReport.update({
+      where: { id: report.id },
+      data: {
+        parentComment: parentComment.trim() || null,
+        parentName: parentName || null,
+        parentSignature: parentSignature || null,
+      },
+    });
+
+    revalidatePath(
+      `/list/communication-book/${report.studentId}/weekly-progress`
+    );
+
+    return {
+      success: true,
+      error: false,
+    };
+  } catch (err) {
+    console.error(
+      "Failed to save Weekly Progress parent section:",
+      err
+    );
+
+    return {
+      success: false,
+      error: true,
+    };
+  }
+};
+
+// =====================================================
+// MESSAGE ACTIONS
+// =====================================================
+
+// CREATE MESSAGE
+export const createMessage = async (
+  currentState: CurrentState,
+  data: MessageSchema
+) => {
+  const { userId, sessionClaims } = auth();
+
+  const role = (sessionClaims?.metadata as { role?: string })?.role;
+
+  try {
+    if (
+      !userId ||
+      (role !== "admin" && role !== "teacher")
+    ) {
+      return {
+        success: false,
+        error: "unauthorized",
+      };
+    }
+
+    let senderAdminId: string | null = null;
+    let senderTeacherId: string | null = null;
+
+    // -------------------------------------------------
+    // FIND SENDER
+    // -------------------------------------------------
+
+    if (role === "admin") {
+      const admin = await prisma.admin.findUnique({
+        where: {
+          clerkUserId: userId,
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      if (!admin) {
+        return {
+          success: false,
+          error: "sender-not-found",
+        };
+      }
+
+      senderAdminId = admin.id;
+    }
+
+    if (role === "teacher") {
+      const teacher = await prisma.teacher.findUnique({
+        where: {
+          clerkUserId: userId,
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      if (!teacher) {
+        return {
+          success: false,
+          error: "sender-not-found",
+        };
+      }
+
+      senderTeacherId = teacher.id;
+    }
+
+    // -------------------------------------------------
+    // CLEAN RECIPIENTS
+    // -------------------------------------------------
+
+    const recipientIds = [
+      ...new Set(
+        data.recipientIds
+          .map((recipient) => recipient.trim())
+          .filter(Boolean)
+      ),
+    ];
+
+    if (recipientIds.length === 0) {
+      return {
+        success: false,
+        error: "no-recipients",
+      };
+    }
+
+    const adminIds = recipientIds
+      .filter((recipient) => recipient.startsWith("admin:"))
+      .map((recipient) =>
+        recipient.substring("admin:".length)
+      );
+
+    const teacherIds = recipientIds
+      .filter((recipient) =>
+        recipient.startsWith("teacher:")
+      )
+      .map((recipient) =>
+        recipient.substring("teacher:".length)
+      );
+
+    if (
+      adminIds.length + teacherIds.length !==
+      recipientIds.length
+    ) {
+      return {
+        success: false,
+        error: "invalid-recipient",
+      };
+    }
+
+    // -------------------------------------------------
+    // VALIDATE ADMIN RECIPIENTS
+    // -------------------------------------------------
+
+    if (adminIds.length > 0) {
+      const admins = await prisma.admin.findMany({
+        where: {
+          id: {
+            in: adminIds,
+          },
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      const existingAdminIds = new Set(
+        admins.map((admin) => admin.id)
+      );
+
+      if (
+        !adminIds.every((id) =>
+          existingAdminIds.has(id)
+        )
+      ) {
+        return {
+          success: false,
+          error: "recipient-not-found",
+        };
+      }
+    }
+
+    // -------------------------------------------------
+    // VALIDATE TEACHER RECIPIENTS
+    // -------------------------------------------------
+
+    if (teacherIds.length > 0) {
+      const teachers = await prisma.teacher.findMany({
+        where: {
+          id: {
+            in: teacherIds,
+          },
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      const existingTeacherIds = new Set(
+        teachers.map((teacher) => teacher.id)
+      );
+
+      if (
+        !teacherIds.every((id) =>
+          existingTeacherIds.has(id)
+        )
+      ) {
+        return {
+          success: false,
+          error: "recipient-not-found",
+        };
+      }
+    }
+
+    // -------------------------------------------------
+    // PREVENT SELF MESSAGE
+    // -------------------------------------------------
+
+    if (
+      (role === "admin" &&
+        adminIds.includes(senderAdminId!)) ||
+      (role === "teacher" &&
+        teacherIds.includes(senderTeacherId!))
+    ) {
+      return {
+        success: false,
+        error: "cannot-message-self",
+      };
+    }
+
+    // -------------------------------------------------
+    // CREATE MESSAGE + RECIPIENTS
+    // -------------------------------------------------
+
+    await prisma.$transaction(async (tx) => {
+      const message = await tx.message.create({
+        data: {
+          senderAdminId,
+          senderTeacherId,
+          subject: data.subject.trim(),
+          body: data.body.trim(),
+        },
+      });
+
+      if (adminIds.length > 0) {
+        await tx.messageRecipient.createMany({
+          data: adminIds.map((adminId) => ({
+            messageId: message.id,
+            adminId,
+          })),
+        });
+      }
+
+      if (teacherIds.length > 0) {
+        await tx.messageRecipient.createMany({
+          data: teacherIds.map((teacherId) => ({
+            messageId: message.id,
+            teacherId,
+          })),
+        });
+      }
+    });
+
+    //revalidatePath("/list/messages");
+
+    return {
+      success: true,
+      error: false,
+    };
+  } catch (err) {
+    console.log("CREATE MESSAGE ERROR:", err);
+
+    return {
+      success: false,
+      error: "message-create-failed",
+    };
+  }
+};
+
+
+// =====================================================
+// UPDATE MESSAGE
+// =====================================================
+
+export const updateMessage = async (
+  currentState: CurrentState,
+  data: MessageSchema
+) => {
+  const { userId, sessionClaims } = auth();
+
+  const role = (sessionClaims?.metadata as { role?: string })?.role;
+
+  try {
+    if (
+      !userId ||
+      (role !== "admin" && role !== "teacher")
+    ) {
+      return {
+        success: false,
+        error: "unauthorized",
+      };
+    }
+
+    if (!data.id) {
+      return {
+        success: false,
+        error: "message-not-found",
+      };
+    }
+
+    let senderAdminId: string | null = null;
+    let senderTeacherId: string | null = null;
+
+    // -------------------------------------------------
+    // FIND CURRENT USER
+    // -------------------------------------------------
+
+    if (role === "admin") {
+      const admin = await prisma.admin.findUnique({
+        where: {
+          clerkUserId: userId,
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      if (!admin) {
+        return {
+          success: false,
+          error: "sender-not-found",
+        };
+      }
+
+      senderAdminId = admin.id;
+    }
+
+    if (role === "teacher") {
+      const teacher = await prisma.teacher.findUnique({
+        where: {
+          clerkUserId: userId,
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      if (!teacher) {
+        return {
+          success: false,
+          error: "sender-not-found",
+        };
+      }
+
+      senderTeacherId = teacher.id;
+    }
+
+    // -------------------------------------------------
+    // FIND MESSAGE AND VERIFY OWNERSHIP
+    // -------------------------------------------------
+
+    const message = await prisma.message.findFirst({
+      where: {
+        id: data.id,
+        ...(role === "admin"
+          ? {
+              senderAdminId,
+            }
+          : {
+              senderTeacherId,
+            }),
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!message) {
+      return {
+        success: false,
+        error: "message-not-found",
+      };
+    }
+
+    // -------------------------------------------------
+    // CLEAN RECIPIENTS
+    // -------------------------------------------------
+
+    const recipientIds = [
+      ...new Set(
+        data.recipientIds
+          .map((recipient) => recipient.trim())
+          .filter(Boolean)
+      ),
+    ];
+
+    if (recipientIds.length === 0) {
+      return {
+        success: false,
+        error: "no-recipients",
+      };
+    }
+
+    const adminIds = recipientIds
+      .filter((recipient) => recipient.startsWith("admin:"))
+      .map((recipient) =>
+        recipient.substring("admin:".length)
+      );
+
+    const teacherIds = recipientIds
+      .filter((recipient) =>
+        recipient.startsWith("teacher:")
+      )
+      .map((recipient) =>
+        recipient.substring("teacher:".length)
+      );
+
+    if (
+      adminIds.length + teacherIds.length !==
+      recipientIds.length
+    ) {
+      return {
+        success: false,
+        error: "invalid-recipient",
+      };
+    }
+
+    // -------------------------------------------------
+    // VALIDATE RECIPIENTS
+    // -------------------------------------------------
+
+    if (adminIds.length > 0) {
+      const admins = await prisma.admin.findMany({
+        where: {
+          id: {
+            in: adminIds,
+          },
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      const existingAdminIds = new Set(
+        admins.map((admin) => admin.id)
+      );
+
+      if (
+        !adminIds.every((id) =>
+          existingAdminIds.has(id)
+        )
+      ) {
+        return {
+          success: false,
+          error: "recipient-not-found",
+        };
+      }
+    }
+
+    if (teacherIds.length > 0) {
+      const teachers = await prisma.teacher.findMany({
+        where: {
+          id: {
+            in: teacherIds,
+          },
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      const existingTeacherIds = new Set(
+        teachers.map((teacher) => teacher.id)
+      );
+
+      if (
+        !teacherIds.every((id) =>
+          existingTeacherIds.has(id)
+        )
+      ) {
+        return {
+          success: false,
+          error: "recipient-not-found",
+        };
+      }
+    }
+
+    // -------------------------------------------------
+    // PREVENT SELF MESSAGE
+    // -------------------------------------------------
+
+    if (
+      (role === "admin" &&
+        adminIds.includes(senderAdminId!)) ||
+      (role === "teacher" &&
+        teacherIds.includes(senderTeacherId!))
+    ) {
+      return {
+        success: false,
+        error: "cannot-message-self",
+      };
+    }
+
+    // -------------------------------------------------
+    // UPDATE MESSAGE
+    // -------------------------------------------------
+
+    await prisma.$transaction(async (tx) => {
+      await tx.message.update({
+        where: {
+          id: message.id,
+        },
+        data: {
+          subject: data.subject.trim(),
+          body: data.body.trim(),
+        },
+      });
+
+      await tx.messageRecipient.deleteMany({
+        where: {
+          messageId: message.id,
+        },
+      });
+
+      if (adminIds.length > 0) {
+        await tx.messageRecipient.createMany({
+          data: adminIds.map((adminId) => ({
+            messageId: message.id,
+            adminId,
+            isRead: false,
+          })),
+        });
+      }
+
+      if (teacherIds.length > 0) {
+        await tx.messageRecipient.createMany({
+          data: teacherIds.map((teacherId) => ({
+            messageId: message.id,
+            teacherId,
+            isRead: false,
+          })),
+        });
+      }
+    });
+
+    //revalidatePath("/list/messages");
+
+    return {
+      success: true,
+      error: false,
+    };
+  } catch (err) {
+    console.log("UPDATE MESSAGE ERROR:", err);
+
+    return {
+      success: false,
+      error: "message-update-failed",
+    };
+  }
+};
+
+
+// =====================================================
+// DELETE MESSAGE
+// =====================================================
+
+export const deleteMessage = async (
+  currentState: CurrentState,
+  data: FormData
+) => {
+  const { userId, sessionClaims } = auth();
+
+  const role = (sessionClaims?.metadata as { role?: string })?.role;
+
+  try {
+    if (
+      !userId ||
+      (role !== "admin" && role !== "teacher")
+    ) {
+      return {
+        success: false,
+        error: "unauthorized",
+      };
+    }
+
+    const id = data.get("id") as string;
+
+    if (!id) {
+      return {
+        success: false,
+        error: "message-not-found",
+      };
+    }
+
+    let currentUserDbId: string | null = null;
+
+    if (role === "admin") {
+      const admin = await prisma.admin.findUnique({
+        where: {
+          clerkUserId: userId,
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      if (!admin) {
+        return {
+          success: false,
+          error: "sender-not-found",
+        };
+      }
+
+      currentUserDbId = admin.id;
+    }
+
+    if (role === "teacher") {
+      const teacher = await prisma.teacher.findUnique({
+        where: {
+          clerkUserId: userId,
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      if (!teacher) {
+        return {
+          success: false,
+          error: "sender-not-found",
+        };
+      }
+
+      currentUserDbId = teacher.id;
+    }
+
+    // -------------------------------------------------
+    // ONLY THE SENDER CAN DELETE THE MESSAGE
+    // -------------------------------------------------
+
+    const message = await prisma.message.findFirst({
+      where: {
+        id: parseInt(id),
+        ...(role === "admin"
+          ? {
+              senderAdminId: currentUserDbId,
+            }
+          : {
+              senderTeacherId: currentUserDbId,
+            }),
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!message) {
+      return {
+        success: false,
+        error: "message-not-found",
+      };
+    }
+
+    await prisma.message.delete({
+      where: {
+        id: message.id,
+      },
+    });
+
+    //revalidatePath("/list/messages");
+
+    return {
+      success: true,
+      error: false,
+    };
+  } catch (err) {
+    console.log("DELETE MESSAGE ERROR:", err);
+
+    return {
+      success: false,
+      error: "message-delete-failed",
+    };
+  }
+};
+
+
+// =====================================================
+// MARK MESSAGE AS READ
+// =====================================================
+
+export const markMessageAsRead = async (
+  currentState: CurrentState,
+  messageRecipientId: number
+) => {
+  const { userId, sessionClaims } = auth();
+
+  const role = (sessionClaims?.metadata as { role?: string })?.role;
+
+  try {
+    if (
+      !userId ||
+      (role !== "admin" && role !== "teacher")
+    ) {
+      return {
+        success: false,
+        error: "unauthorized",
+      };
+    }
+
+    let adminId: string | null = null;
+    let teacherId: string | null = null;
+
+    if (role === "admin") {
+      const admin = await prisma.admin.findUnique({
+        where: {
+          clerkUserId: userId,
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      if (!admin) {
+        return {
+          success: false,
+          error: "recipient-not-found",
+        };
+      }
+
+      adminId = admin.id;
+    }
+
+    if (role === "teacher") {
+      const teacher = await prisma.teacher.findUnique({
+        where: {
+          clerkUserId: userId,
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      if (!teacher) {
+        return {
+          success: false,
+          error: "recipient-not-found",
+        };
+      }
+
+      teacherId = teacher.id;
+    }
+
+    const recipient =
+      await prisma.messageRecipient.findFirst({
+        where: {
+          id: messageRecipientId,
+          ...(role === "admin"
+            ? {
+                adminId,
+              }
+            : {
+                teacherId,
+              }),
+        },
+        select: {
+          id: true,
+          isRead: true,
+        },
+      });
+
+    if (!recipient) {
+      return {
+        success: false,
+        error: "message-not-found",
+      };
+    }
+
+    if (recipient.isRead) {
+      return {
+        success: true,
+        error: false,
+      };
+    }
+
+    await prisma.messageRecipient.update({
+      where: {
+        id: recipient.id,
+      },
+      data: {
+        isRead: true,
+        readAt: new Date(),
+      },
+    });
+
+    revalidatePath("/list/messages");
+
+    return {
+      success: true,
+      error: false,
+    };
+  } catch (err) {
+    console.log("MARK MESSAGE AS READ ERROR:", err);
+
+    return {
+      success: false,
+      error: "message-read-failed",
+    };
+  }
+};
+
+
+
+// ============================================================
+// PERFORMANCE ANALYSIS
+// ============================================================
+
+const performanceAnalysisAssessmentTypes = [
+  "Q1",
+  "Q2",
+  "TEST1",
+  "TEST2",
+  "MIDTERM",
+  "FINAL",
+] as const;
+
+type PerformanceAnalysisAssessmentType =
+  (typeof performanceAnalysisAssessmentTypes)[number];
+
+type PerformanceCategory =
+  | "EXCELLENT"
+  | "VERY_GOOD"
+  | "AVERAGE"
+  | "POOR"
+  | "FAIL";
+
+// ============================================================
+// PERFORMANCE CATEGORY
+// ============================================================
+
+const getPerformanceCategory = (
+  normalizedScore: number
+): PerformanceCategory => {
+  if (normalizedScore >= 9) return "EXCELLENT";
+  if (normalizedScore > 7) return "VERY_GOOD";
+  if (normalizedScore > 6) return "AVERAGE";
+  if (normalizedScore >= 5) return "POOR";
+  return "FAIL";
+};
+
+// ============================================================
+// BUILD PERFORMANCE ANALYSIS SUMMARY
+// ============================================================
+
+type PerformanceAnalysisSummaryData = {
+  totalStudents: number;
+  totalMale: number;
+  totalFemale: number;
+
+  excellentMale: number;
+  excellentFemale: number;
+  excellentTotal: number;
+
+  veryGoodMale: number;
+  veryGoodFemale: number;
+  veryGoodTotal: number;
+
+  averageMale: number;
+  averageFemale: number;
+  averageTotal: number;
+
+  poorMale: number;
+  poorFemale: number;
+  poorTotal: number;
+
+  failMale: number;
+  failFemale: number;
+  failTotal: number;
+};
+
+const buildPerformanceAnalysisSummary = (
+  students: Array<{
+    sex: UserSex | null;
+    normalizedScore: number;
+    category: PerformanceCategory;
+  }>
+): PerformanceAnalysisSummaryData => {
+  const summary: PerformanceAnalysisSummaryData = {
+    totalStudents: students.length,
+
+    totalMale: 0,
+    totalFemale: 0,
+
+    excellentMale: 0,
+    excellentFemale: 0,
+    excellentTotal: 0,
+
+    veryGoodMale: 0,
+    veryGoodFemale: 0,
+    veryGoodTotal: 0,
+
+    averageMale: 0,
+    averageFemale: 0,
+    averageTotal: 0,
+
+    poorMale: 0,
+    poorFemale: 0,
+    poorTotal: 0,
+
+    failMale: 0,
+    failFemale: 0,
+    failTotal: 0,
+  };
+
+  for (const student of students) {
+    if (student.sex === "MALE") {
+      summary.totalMale++;
+    }
+
+    if (student.sex === "FEMALE") {
+      summary.totalFemale++;
+    }
+
+    switch (student.category) {
+      case "EXCELLENT":
+        summary.excellentTotal++;
+
+        if (student.sex === "MALE") {
+          summary.excellentMale++;
+        }
+
+        if (student.sex === "FEMALE") {
+          summary.excellentFemale++;
+        }
+
+        break;
+
+      case "VERY_GOOD":
+        summary.veryGoodTotal++;
+
+        if (student.sex === "MALE") {
+          summary.veryGoodMale++;
+        }
+
+        if (student.sex === "FEMALE") {
+          summary.veryGoodFemale++;
+        }
+
+        break;
+
+      case "AVERAGE":
+        summary.averageTotal++;
+
+        if (student.sex === "MALE") {
+          summary.averageMale++;
+        }
+
+        if (student.sex === "FEMALE") {
+          summary.averageFemale++;
+        }
+
+        break;
+
+      case "POOR":
+        summary.poorTotal++;
+
+        if (student.sex === "MALE") {
+          summary.poorMale++;
+        }
+
+        if (student.sex === "FEMALE") {
+          summary.poorFemale++;
+        }
+
+        break;
+
+      case "FAIL":
+        summary.failTotal++;
+
+        if (student.sex === "MALE") {
+          summary.failMale++;
+        }
+
+        if (student.sex === "FEMALE") {
+          summary.failFemale++;
+        }
+
+        break;
+    }
+  }
+
+  return summary;
+};
+
+// ============================================================
+// PARSE PERFORMANCE ANALYSIS FORM DATA
+// ============================================================
+
+const parsePerformanceAnalysisFormData = (
+  input: FormData | PerformanceAnalysisSchema
+): PerformanceAnalysisSchema => {
+  if (input instanceof FormData) {
+    const raw = Object.fromEntries(input.entries());
+
+    return performanceAnalysisSchema.parse({
+      ...raw,
+
+      id:
+        raw.id === ""
+          ? undefined
+          : raw.id,
+
+      section:
+        raw.section === ""
+          ? undefined
+          : raw.section,
+
+      gradeId:
+        raw.gradeId === ""
+          ? undefined
+          : raw.gradeId,
+
+      classId:
+        raw.classId === ""
+          ? undefined
+          : raw.classId,
+
+      assessmentType:
+        raw.assessmentType === ""
+          ? undefined
+          : raw.assessmentType,
+    });
+  }
+
+  return performanceAnalysisSchema.parse(input);
+};
+
+// ============================================================
+// REBUILD PERFORMANCE ANALYSIS
+// ============================================================
+
+const rebuildPerformanceAnalysis = async (
+  data: PerformanceAnalysisSchema,
+  userId: string,
+  role: string,
+  existingAnalysis?: {
+    id: number;
+    createdByAdminId: string | null;
+    createdByTeacherId: string | null;
+    assessmentScope: string;
+    resultSubmissionId: number | null;
+  },
+  saveOverallSummary = false
+) => {
+  // ==========================================================
+  // RESOLVE CREATOR
+  // ==========================================================
+
+  let createdByAdminId: string | null = null;
+  let createdByTeacherId: string | null = null;
+
+  if (role === "admin") {
+    const admin = await prisma.admin.findUnique({
+      where: {
+        clerkUserId: userId,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!admin) {
+      return {
+        success: false,
+        error: true,
+      };
+    }
+
+    createdByAdminId =
+      existingAnalysis?.createdByAdminId ?? admin.id;
+  }
+
+  if (role === "teacher") {
+    const teacher = await prisma.teacher.findUnique({
+      where: {
+        clerkUserId: userId,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!teacher) {
+      return {
+        success: false,
+        error: true,
+      };
+    }
+
+    createdByTeacherId =
+      existingAnalysis?.createdByTeacherId ?? teacher.id;
+  }
+
+  // ==========================================================
+  // GET ACADEMIC YEAR
+  // ==========================================================
+
+  const academicYear =
+    await prisma.academicYear.findUnique({
+      where: {
+        id: data.academicYearId,
+      },
+      select: {
+        id: true,
+        name: true,
+      },
+    });
+
+  if (!academicYear) {
+    return {
+      success: false,
+      error: true,
+    };
+  }
+
+  // ==========================================================
+  // GET SUBJECT
+  // ==========================================================
+
+  const subject =
+    await prisma.subject.findUnique({
+      where: {
+        id: data.subjectId,
+      },
+      select: {
+        id: true,
+        name: true,
+      },
+    });
+
+  if (!subject) {
+    return {
+      success: false,
+      error: true,
+    };
+  }
+
+  // ==========================================================
+  // RESOLVE SECTION / GRADE / CLASS NAMES
+  // ==========================================================
+
+  let selectedSectionName: string | null = null;
+  let selectedGradeName: string | null = null;
+  let selectedClassName: string | null = null;
+
+  if (data.section) {
+    selectedSectionName = data.section;
+  }
+
+  if (data.gradeId) {
+    const grade =
+      await prisma.grade.findUnique({
+        where: {
+          id: data.gradeId,
+        },
+        select: {
+          id: true,
+          name: true,
+          section: true,
+        },
+      });
+
+    if (!grade) {
+      return {
+        success: false,
+        error: true,
+      };
+    }
+
+    selectedGradeName = grade.name;
+
+    if (!selectedSectionName && grade.section) {
+      selectedSectionName = grade.section;
+    }
+  }
+
+  if (data.classId) {
+    const schoolClass =
+      await prisma.class.findUnique({
+        where: {
+          id: data.classId,
+        },
+        select: {
+          id: true,
+          name: true,
+          gradeId: true,
+        },
+      });
+
+    if (!schoolClass) {
+      return {
+        success: false,
+        error: true,
+      };
+    }
+
+    selectedClassName = schoolClass.name;
+
+    if (
+      data.gradeId &&
+      schoolClass.gradeId !== data.gradeId
+    ) {
+      return {
+        success: false,
+        error: true,
+      };
+    }
+
+    if (!selectedGradeName) {
+      const classGrade =
+        await prisma.grade.findUnique({
+          where: {
+            id: schoolClass.gradeId,
+          },
+          select: {
+            id: true,
+            name: true,
+            section: true,
+          },
+        });
+
+      if (classGrade) {
+        selectedGradeName = classGrade.name;
+
+        if (!selectedSectionName) {
+          selectedSectionName =
+            classGrade.section;
+        }
+      }
+    }
+  }
+
+  // ==========================================================
+  // TEACHER ACCESS CHECK
+  // ==========================================================
+
+  if (role === "teacher") {
+    const teacher =
+      await prisma.teacher.findUnique({
+        where: {
+          clerkUserId: userId,
+        },
+        select: {
+          id: true,
+        },
+      });
+
+    if (!teacher) {
+      return {
+        success: false,
+        error: true,
+      };
+    }
+
+    // A teacher can create/update a CLASS analysis only
+    // when the teacher actually teaches that class/subject.
+    if (
+      data.level === "CLASS" &&
+      data.classId
+    ) {
+      const teacherLesson =
+        await prisma.lesson.findFirst({
+          where: {
+            teacherId: teacher.id,
+            classId: data.classId,
+            subjectId: data.subjectId,
+          },
+          select: {
+            id: true,
+          },
+        });
+
+      if (!teacherLesson) {
+        return {
+          success: false,
+          error: true,
+        };
+      }
+    }
+
+    // For higher-level analysis, verify that the teacher
+    // teaches at least one matching class for the subject.
+    if (data.level !== "CLASS") {
+      const teacherLesson =
+        await prisma.lesson.findFirst({
+          where: {
+            teacherId: teacher.id,
+            subjectId: data.subjectId,
+
+            ...(data.gradeId
+              ? {
+                  class: {
+                    gradeId: data.gradeId,
+                  },
+                }
+              : {}),
+
+            ...(data.section
+              ? {
+                  class: {
+                    grade: {
+                      section:
+                        data.section as GradeSection,
+                    },
+                  },
+                }
+              : {}),
+          },
+          select: {
+            id: true,
+          },
+        });
+
+      if (!teacherLesson) {
+        return {
+          success: false,
+          error: true,
+        };
+      }
+    }
+  }
+
+  // ==========================================================
+  // OVERALL ANALYSIS
+  //
+  // CLASS:
+  //   - real CLASS-level Overall record
+  //   - exact ResultSubmission can be linked when explicitly
+  //     saved
+  //
+  // GRADE / SECTION / SCHOOL:
+  //   - snapshot at the selected level
+  //   - aggregate summary is stored
+  //   - resultSubmissionId remains NULL
+  //
+  // IMPORTANT:
+  // No higher-level Overall is converted into CLASS.
+  // ==========================================================
+
+  let resultSubmissionId: number | undefined;
+
+  if (
+    data.assessmentScope === "OVERALL"
+  ) {
+    if (data.level === "CLASS") {
+      if (!data.classId) {
+        return {
+          success: false,
+          error: true,
+        };
+      }
+
+      const submission =
+        await prisma.resultSubmission.findUnique({
+          where: {
+            academicYearId_classId_subjectId_semester: {
+              academicYearId:
+                data.academicYearId,
+
+              classId:
+                data.classId,
+
+              subjectId:
+                data.subjectId,
+
+              semester:
+                data.semester,
+            },
+          },
+          select: {
+            id: true,
+            status: true,
+          },
+        });
+
+      if (!submission) {
+        return {
+          success: false,
+          error: true,
+        };
+      }
+
+      // Live Overall analysis is allowed while the submission
+      // is DRAFT.
+      //
+      // Only explicit Save Overall Analysis may permanently
+      // attach the PerformanceAnalysis to the submitted
+      // ResultSubmission.
+      if (saveOverallSummary) {
+        if (submission.status !== "SUBMITTED") {
+          return {
+            success: false,
+            error: true,
+          };
+        }
+
+        resultSubmissionId =
+          submission.id;
+      }
+    }
+
+    // GRADE / SECTION / SCHOOL intentionally do not resolve
+    // a ResultSubmission.
+    //
+    // Their resultSubmissionId remains undefined and is saved
+    // as NULL.
+  }
+
+  // ==========================================================
+  // DETERMINE ASSESSMENT TYPES
+  // ==========================================================
+
+  const requestedAssessmentTypes:
+    PerformanceAnalysisAssessmentType[] =
+    data.assessmentScope === "ASSESSMENT"
+      ? [
+          data.assessmentType as
+            PerformanceAnalysisAssessmentType,
+        ]
+      : [
+          ...performanceAnalysisAssessmentTypes,
+        ];
+
+  // ==========================================================
+  // GET ASSESSMENTS
+  //
+  // ASSESSMENT:
+  //   Only the requested Q/Test/Midterm/Final type.
+  //
+  // OVERALL:
+  //   ALL assessment definitions are loaded, including
+  //   CLASS_ACTIVITY, because the existing result calculation
+  //   needs:
+  //
+  //   Daily Activities = /30
+  //   Tests/Exams      = /70
+  //   Final Result     = /100
+  // ==========================================================
+
+  const assessments =
+    await prisma.assessment.findMany({
+      where: {
+        academicYearId:
+          data.academicYearId,
+
+        subjectId:
+          data.subjectId,
+
+        semester:
+          data.semester,
+
+        ...(data.gradeId
+          ? {
+              gradeId:
+                data.gradeId,
+            }
+          : {}),
+
+        ...(data.assessmentScope === "ASSESSMENT"
+          ? {
+              type: {
+                in: requestedAssessmentTypes,
+              },
+            }
+          : {}),
+      },
+
+      select: {
+        id: true,
+        type: true,
+        title: true,
+        maxScore: true,
+        weight: true,
+        category: true,
+        gradeId: true,
+
+        grade: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+
+      orderBy: {
+        id: "asc",
+      },
+    });
+
+  if (assessments.length === 0) {
+    return {
+      success: false,
+      error: true,
+    };
+  }
+
+  // ==========================================================
+  // EXISTING RESULT CALCULATION DEFINITIONS
+  // ==========================================================
+
+  const assessmentDefinitions =
+    assessments.map(
+      (assessment) => ({
+        type:
+          assessment.type,
+
+        category:
+          assessment.category,
+
+        maxScore:
+          assessment.maxScore,
+
+        weight:
+          assessment.weight,
+      })
+    );
+
+  // ==========================================================
+  // GET AUTHORITATIVE STUDENT ENROLLMENTS
+  //
+  // StudentEnrollment -> Class -> Grade
+  // ==========================================================
+
+  const enrollments =
+    await prisma.studentEnrollment.findMany({
+      where: {
+        academicYearId:
+          data.academicYearId,
+
+        ...(data.classId
+          ? {
+              classId:
+                data.classId,
+            }
+          : {}),
+
+        ...(data.gradeId ||
+        data.section
+          ? {
+              class: {
+                ...(data.gradeId
+                  ? {
+                      gradeId:
+                        data.gradeId,
+                    }
+                  : {}),
+
+                ...(data.section
+                  ? {
+                      grade: {
+                        section:
+                          data.section as GradeSection,
+                      },
+                    }
+                  : {}),
+              },
+            }
+          : {}),
+      },
+
+      select: {
+        studentId: true,
+        rollNumber: true,
+
+        student: {
+          select: {
+            id: true,
+            name: true,
+            sex: true,
+          },
+        },
+
+        class: {
+          select: {
+            id: true,
+            name: true,
+
+            grade: {
+              select: {
+                id: true,
+                name: true,
+                section: true,
+              },
+            },
+          },
+        },
+      },
+
+      orderBy: [
+        {
+          classId: "asc",
+        },
+        {
+          rollNumber: "asc",
+        },
+      ],
+    });
+
+  if (enrollments.length === 0) {
+    return {
+      success: false,
+      error: true,
+    };
+  }
+
+  // ==========================================================
+  // GET STUDENT ASSESSMENTS
+  //
+  // 0 is a recorded score.
+  // Missing record is unrecorded.
+  // ==========================================================
+
+  const studentIds =
+    enrollments.map(
+      (enrollment) =>
+        enrollment.studentId
+    );
+
+  const assessmentIds =
+    assessments.map(
+      (assessment) =>
+        assessment.id
+    );
+
+  const studentAssessments =
+    await prisma.studentAssessment.findMany({
+      where: {
+        studentId: {
+          in: studentIds,
+        },
+
+        assessmentId: {
+          in: assessmentIds,
+        },
+      },
+
+      select: {
+        studentId: true,
+        assessmentId: true,
+        score: true,
+      },
+    });
+
+  // ==========================================================
+  // BUILD SCORE MAP
+  // ==========================================================
+
+  const scoreMap = new Map<
+    string,
+    number | null
+  >();
+
+  for (
+    const studentAssessment of
+      studentAssessments
+  ) {
+    scoreMap.set(
+      `${studentAssessment.studentId}-${studentAssessment.assessmentId}`,
+      studentAssessment.score
+    );
+  }
+
+  // ==========================================================
+  // BUILD ASSESSMENT DEFINITIONS FOR SNAPSHOT
+  // ==========================================================
+
+  const assessmentDefinitionData =
+    assessments.map(
+      (assessment) => ({
+        assessmentId:
+          assessment.id,
+
+        gradeId:
+          assessment.gradeId,
+
+        gradeName:
+          assessment.grade?.name ??
+          null,
+
+        assessmentType:
+          assessment.type,
+
+        assessmentTitle:
+          assessment.title,
+
+        maxScore:
+          assessment.maxScore,
+
+        weight:
+          assessment.weight,
+
+        category:
+          assessment.category,
+      })
+    );
+
+  // ==========================================================
+  // BUILD STUDENT SNAPSHOTS
+  //
+  // ASSESSMENT:
+  //   Save individual student snapshots.
+  //
+  // OVERALL:
+  //   Do not save individual PerformanceAnalysisStudent rows.
+  //   Use the calculated students only to build the aggregate
+  //   PerformanceAnalysisSummary.
+  // ==========================================================
+
+  const studentSnapshotData:
+    Array<{
+      studentId: string;
+      studentName: string;
+      sex: UserSex;
+      gradeName: string;
+      className: string;
+      rollNumber: number;
+      score: number;
+      maxScore: number;
+      normalizedScore: number;
+      category: PerformanceCategory;
+    }> = [];
+
+  const overallStudents:
+    Array<{
+      sex: UserSex | null;
+      normalizedScore: number;
+      category: PerformanceCategory;
+    }> = [];
+
+
+// ==========================================================
+// CALCULATE STUDENTS
+// ==========================================================
+
+for (const enrollment of enrollments) {
+  // ========================================================
+  // INDIVIDUAL ASSESSMENT ANALYSIS
+  //
+  // IMPORTANT:
+  //
+  // For CLASS / GRADE / SECTION / SCHOOL analysis, the
+  // assessment must belong to the student's actual grade.
+  //
+  // This is especially important for SECTION and SCHOOL,
+  // because those levels contain students from multiple
+  // grades and each grade has its own Q1/Q2/TEST/etc.
+  // ========================================================
+
+  if (
+    data.assessmentScope ===
+    "ASSESSMENT"
+  ) {
+    const studentGradeId =
+      enrollment.class.grade?.id;
+
+    if (!studentGradeId) {
+      continue;
+    }
+
+    /*
+     * Find the assessment for THIS student's grade and
+     * the requested assessment type.
+     *
+     * CLASS:
+     *   This resolves to the same assessment that was
+     *   previously used.
+     *
+     * GRADE:
+     *   The selected grade is already enforced by the
+     *   enrollment query.
+     *
+     * SECTION / SCHOOL:
+     *   Each student's own grade is used, preventing a
+     *   Grade 1 assessment from being applied to Grade 2,
+     *   Grade 3, etc.
+     */
+    const selectedAssessment =
+      assessments.find(
+        (assessment) =>
+          assessment.type ===
+            data.assessmentType &&
+          assessment.gradeId ===
+            studentGradeId
+      );
+
+    if (!selectedAssessment) {
+      continue;
+    }
+
+    const selectedScore =
+      scoreMap.get(
+        `${enrollment.studentId}-${selectedAssessment.id}`
+      );
+
+    /*
+     * Missing score means the assessment was not recorded
+     * for this student.
+     *
+     * Do NOT convert missing into zero.
+     */
+    if (
+      !isRecordedScore(
+        selectedScore
+      )
+    ) {
+      continue;
+    }
+
+    const maxScore =
+      selectedAssessment.maxScore;
+
+    if (
+      !maxScore ||
+      maxScore <= 0
+    ) {
+      continue;
+    }
+
+    const normalizedScore =
+      roundResult(
+        (selectedScore /
+          maxScore) *
+          10
+      );
+
+    const category =
+      getPerformanceCategory(
+        normalizedScore
+      );
+
+    studentSnapshotData.push({
+      studentId:
+        enrollment.studentId,
+
+      studentName:
+        enrollment.student.name,
+
+      sex:
+        enrollment.student.sex,
+
+      gradeName:
+        enrollment.class.grade?.name ??
+        selectedGradeName ??
+        "",
+
+      className:
+        enrollment.class.name,
+
+      rollNumber:
+        enrollment.rollNumber,
+
+      score:
+        selectedScore,
+
+      maxScore,
+
+      normalizedScore,
+
+      category,
+    });
+
+    /*
+     * Do not execute Overall logic for an Assessment
+     * analysis.
+     */
+    continue;
+  }
+
+  // ========================================================
+  // OVERALL ANALYSIS
+  //
+  // Uses the existing result calculation:
+  //
+  // Daily Activities = /30
+  // Tests/Exams      = /70
+  // Final Result     = /100
+  //
+  // IMPORTANT:
+  // Overall is intentionally kept separate from the
+  // Assessment snapshot logic above.
+  // ========================================================
+
+  /*
+   * For Overall, scores are collected by assessment type.
+   *
+   * CLASS Overall:
+   *   all assessments belong to one grade.
+   *
+   * Higher-level Overall:
+   *   the current architecture stores only the aggregate
+   *   summary, not individual PerformanceAnalysisStudent
+   *   rows.
+   *
+   * We therefore preserve the existing Overall behavior
+   * here.
+   */
+  const scores: Record<
+    string,
+    number | null | undefined
+  > = {};
+
+  for (
+    const assessment of assessments
+  ) {
+    const recordedScore =
+      scoreMap.get(
+        `${enrollment.studentId}-${assessment.id}`
+      );
+
+    if (
+      isRecordedScore(
+        recordedScore
+      )
+    ) {
+      scores[assessment.type] =
+        recordedScore;
+    } else if (
+      scores[assessment.type] ===
+      undefined
+    ) {
+      scores[assessment.type] =
+        undefined;
+    }
+  }
+
+  /*
+   * For Overall, check ALL assessments.
+   *
+   * CLASS_ACTIVITY is intentionally included.
+   */
+  const hasAnyRecordedAssessment =
+    assessments.some(
+      (assessment) =>
+        isRecordedScore(
+          scoreMap.get(
+            `${enrollment.studentId}-${assessment.id}`
+          )
+        )
+    );
+
+  if (
+    !hasAnyRecordedAssessment
+  ) {
+    continue;
+  }
+
+  /*
+   * Overall final score uses the existing result
+   * calculation system.
+   */
+  const finalScore =
+    roundResult(
+      calculateFinalResult(
+        assessmentDefinitions,
+        scores
+      )
+    );
+
+  const normalizedScore =
+    roundResult(
+      finalScore / 10
+    );
+
+  const category =
+    getPerformanceCategory(
+      normalizedScore
+    );
+
+  overallStudents.push({
+    sex:
+      enrollment.student.sex,
+
+    normalizedScore,
+
+    category,
+  });
+}
+  // ==========================================================
+  // BUILD OVERALL SUMMARY
+  // ==========================================================
+
+  const overallSummary =
+    data.assessmentScope ===
+    "OVERALL"
+      ? buildPerformanceAnalysisSummary(
+          overallStudents
+        )
+      : null;
+
+  // ==========================================================
+  // SET DISPLAY INFORMATION
+  // ==========================================================
+
+  let assessmentTitle:
+    | string
+    | null = null;
+
+  let assessmentMaxScore:
+    | number
+    | null = null;
+
+  let assessmentWeight:
+    | number
+    | null = null;
+
+  if (
+    data.assessmentScope ===
+    "ASSESSMENT"
+  ) {
+    const selectedAssessment =
+      assessments.find(
+        (assessment) =>
+          assessment.type ===
+          data.assessmentType
+      );
+
+    if (!selectedAssessment) {
+      return {
+        success: false,
+        error: true,
+      };
+    }
+
+    assessmentTitle =
+      selectedAssessment.title;
+
+    assessmentMaxScore =
+      selectedAssessment.maxScore;
+
+    assessmentWeight =
+      selectedAssessment.weight;
+  }
+
+  if (
+    data.assessmentScope ===
+    "OVERALL"
+  ) {
+    assessmentTitle =
+      "Overall Performance";
+
+    assessmentMaxScore = 100;
+    assessmentWeight = 100;
+  }
+
+  // ==========================================================
+  // UPDATE EXISTING PERFORMANCE ANALYSIS
+  // ==========================================================
+
+  if (existingAnalysis) {
+    await prisma.$transaction(
+      async (tx) => {
+        // ----------------------------------------------------
+        // Remove previous child records
+        // ----------------------------------------------------
+
+        await tx.performanceAnalysisAssessment.deleteMany({
+          where: {
+            performanceAnalysisId:
+              existingAnalysis.id,
+          },
+        });
+
+        await tx.performanceAnalysisStudent.deleteMany({
+          where: {
+            performanceAnalysisId:
+              existingAnalysis.id,
+          },
+        });
+
+        await tx.performanceAnalysisSummary.deleteMany({
+          where: {
+            performanceAnalysisId:
+              existingAnalysis.id,
+          },
+        });
+
+        // ----------------------------------------------------
+        // IMPORTANT RESULT SUBMISSION BEHAVIOR
+        //
+        // For a CLASS Overall:
+        //   saveOverallSummary=true means permanently link
+        //   to the exact submitted ResultSubmission.
+        //
+        // For GRADE / SECTION / SCHOOL:
+        //   resultSubmissionId stays NULL.
+        //
+        // For ordinary updates:
+        //   do not accidentally preserve a stale submission
+        //   link if the analysis is being rebuilt live.
+        // ----------------------------------------------------
+
+        let updateResultSubmissionId:
+          | number
+          | null = null;
+
+        if (
+          data.assessmentScope ===
+            "OVERALL" &&
+          data.level === "CLASS" &&
+          saveOverallSummary &&
+          resultSubmissionId
+        ) {
+          updateResultSubmissionId =
+            resultSubmissionId;
+        }
+
+        // ----------------------------------------------------
+        // Update parent record
+        // ----------------------------------------------------
+
+        await tx.performanceAnalysis.update({
+          where: {
+            id:
+              existingAnalysis.id,
+          },
+
+          data: {
+            academicYearId:
+              data.academicYearId,
+
+            semester:
+              data.semester,
+
+            level:
+              data.level,
+
+            section:
+              data.section
+                ? (data.section as GradeSection)
+                : null,
+
+            gradeId:
+              data.gradeId ??
+              null,
+
+            classId:
+              data.classId ??
+              null,
+
+            subjectId:
+              data.subjectId,
+
+            assessmentScope:
+              data.assessmentScope,
+
+            assessmentType:
+              data.assessmentType,
+
+            sectionName:
+              selectedSectionName,
+
+            gradeName:
+              selectedGradeName,
+
+            className:
+              selectedClassName,
+
+            subjectName:
+              subject.name,
+
+            assessmentTitle,
+
+            assessmentMaxScore,
+
+            assessmentWeight,
+
+            resultSubmissionId:
+              updateResultSubmissionId,
+
+            createdByAdminId:
+              existingAnalysis.createdByAdminId,
+
+            createdByTeacherId:
+              existingAnalysis.createdByTeacherId,
+          },
+        });
+
+        // ----------------------------------------------------
+        // Save assessment definitions
+        // ----------------------------------------------------
+
+        if (
+          assessmentDefinitionData.length >
+          0
+        ) {
+          await tx.performanceAnalysisAssessment.createMany({
+            data:
+              assessmentDefinitionData.map(
+                (assessment) => ({
+                  performanceAnalysisId:
+                    existingAnalysis.id,
+
+                  assessmentId:
+                    assessment.assessmentId,
+
+                  gradeId:
+                    assessment.gradeId,
+
+                  gradeName:
+                    assessment.gradeName,
+
+                  assessmentType:
+                    assessment.assessmentType,
+
+                  assessmentTitle:
+                    assessment.assessmentTitle,
+
+                  maxScore:
+                    assessment.maxScore,
+
+                  weight:
+                    assessment.weight,
+
+                  category:
+                    assessment.category,
+                })
+              ),
+          });
+        }
+
+        // ----------------------------------------------------
+        // Save student snapshots only for ASSESSMENT
+        // ----------------------------------------------------
+
+        if (
+          data.assessmentScope ===
+          "ASSESSMENT"
+        ) {
+          if (
+            studentSnapshotData.length >
+            0
+          ) {
+            await tx.performanceAnalysisStudent.createMany({
+              data:
+                studentSnapshotData.map(
+                  (student) => ({
+                    performanceAnalysisId:
+                      existingAnalysis.id,
+
+                    studentId:
+                      student.studentId,
+
+                    studentName:
+                      student.studentName,
+
+                    sex:
+                      student.sex,
+
+                    gradeName:
+                      student.gradeName,
+
+                    className:
+                      student.className,
+
+                    rollNumber:
+                      student.rollNumber,
+
+                    score:
+                      student.score,
+
+                    maxScore:
+                      student.maxScore,
+
+                    normalizedScore:
+                      student.normalizedScore,
+
+                    category:
+                      student.category,
+                  })
+                ),
+            });
+          }
+        }
+
+        // ----------------------------------------------------
+        // Save Overall aggregate summary
+        //
+        // CLASS:
+        //   Only when explicitly saved after SUBMITTED.
+        //
+        // GRADE / SECTION / SCHOOL:
+        //   Always save the aggregate snapshot.
+        //   resultSubmissionId remains NULL.
+        // ----------------------------------------------------
+
+        const shouldSaveOverallSummary =
+          data.assessmentScope ===
+            "OVERALL" &&
+          overallSummary &&
+          (
+            data.level !== "CLASS" ||
+            (
+              data.level ===
+                "CLASS" &&
+              saveOverallSummary &&
+              data.classId &&
+              resultSubmissionId
+            )
+          );
+
+        if (
+          shouldSaveOverallSummary &&
+          overallSummary
+        ) {
+          await tx.performanceAnalysisSummary.create({
+            data: {
+              performanceAnalysisId:
+                existingAnalysis.id,
+
+              totalStudents:
+                overallSummary.totalStudents,
+
+              totalMale:
+                overallSummary.totalMale,
+
+              totalFemale:
+                overallSummary.totalFemale,
+
+              excellentMale:
+                overallSummary.excellentMale,
+
+              excellentFemale:
+                overallSummary.excellentFemale,
+
+              excellentTotal:
+                overallSummary.excellentTotal,
+
+              veryGoodMale:
+                overallSummary.veryGoodMale,
+
+              veryGoodFemale:
+                overallSummary.veryGoodFemale,
+
+              veryGoodTotal:
+                overallSummary.veryGoodTotal,
+
+              averageMale:
+                overallSummary.averageMale,
+
+              averageFemale:
+                overallSummary.averageFemale,
+
+              averageTotal:
+                overallSummary.averageTotal,
+
+              poorMale:
+                overallSummary.poorMale,
+
+              poorFemale:
+                overallSummary.poorFemale,
+
+              poorTotal:
+                overallSummary.poorTotal,
+
+              failMale:
+                overallSummary.failMale,
+
+              failFemale:
+                overallSummary.failFemale,
+
+              failTotal:
+                overallSummary.failTotal,
+            },
+          });
+        }
+      }
+    );
+  } else {
+    // ========================================================
+    // CREATE NEW PERFORMANCE ANALYSIS
+    // ========================================================
+
+    await prisma.$transaction(
+      async (tx) => {
+        const createdAnalysis =
+          await tx.performanceAnalysis.create({
+            data: {
+              academicYearId:
+                data.academicYearId,
+
+              semester:
+                data.semester,
+
+              level:
+                data.level,
+
+              section:
+                data.section
+                  ? (data.section as GradeSection)
+                  : null,
+
+              gradeId:
+                data.gradeId ??
+                null,
+
+              classId:
+                data.classId ??
+                null,
+
+              subjectId:
+                data.subjectId,
+
+              assessmentScope:
+                data.assessmentScope,
+
+              assessmentType:
+                data.assessmentType,
+
+              sectionName:
+                selectedSectionName,
+
+              gradeName:
+                selectedGradeName,
+
+              className:
+                selectedClassName,
+
+              subjectName:
+                subject.name,
+
+              assessmentTitle,
+
+              assessmentMaxScore,
+
+              assessmentWeight,
+
+              createdByAdminId,
+
+              createdByTeacherId,
+
+              // Higher-level Overall analyses are snapshots
+              // and therefore do not receive a ResultSubmission.
+              //
+              // A CLASS Overall receives a submission link only
+              // during the explicit Save Overall action.
+              resultSubmissionId:
+                data.assessmentScope ===
+                  "OVERALL" &&
+                data.level ===
+                  "CLASS" &&
+                saveOverallSummary &&
+                resultSubmissionId
+                  ? resultSubmissionId
+                  : null,
+            },
+          });
+
+        // ----------------------------------------------------
+        // Save assessment definitions
+        // ----------------------------------------------------
+
+        if (
+          assessmentDefinitionData.length >
+          0
+        ) {
+          await tx.performanceAnalysisAssessment.createMany({
+            data:
+              assessmentDefinitionData.map(
+                (assessment) => ({
+                  performanceAnalysisId:
+                    createdAnalysis.id,
+
+                  assessmentId:
+                    assessment.assessmentId,
+
+                  gradeId:
+                    assessment.gradeId,
+
+                  gradeName:
+                    assessment.gradeName,
+
+                  assessmentType:
+                    assessment.assessmentType,
+
+                  assessmentTitle:
+                    assessment.assessmentTitle,
+
+                  maxScore:
+                    assessment.maxScore,
+
+                  weight:
+                    assessment.weight,
+
+                  category:
+                    assessment.category,
+                })
+              ),
+          });
+        }
+
+        // ----------------------------------------------------
+        // Save student snapshots only for ASSESSMENT
+        // ----------------------------------------------------
+
+        if (
+          data.assessmentScope ===
+          "ASSESSMENT"
+        ) {
+          if (
+            studentSnapshotData.length >
+            0
+          ) {
+            await tx.performanceAnalysisStudent.createMany({
+              data:
+                studentSnapshotData.map(
+                  (student) => ({
+                    performanceAnalysisId:
+                      createdAnalysis.id,
+
+                    studentId:
+                      student.studentId,
+
+                    studentName:
+                      student.studentName,
+
+                    sex:
+                      student.sex,
+
+                    gradeName:
+                      student.gradeName,
+
+                    className:
+                      student.className,
+
+                    rollNumber:
+                      student.rollNumber,
+
+                    score:
+                      student.score,
+
+                    maxScore:
+                      student.maxScore,
+
+                    normalizedScore:
+                      student.normalizedScore,
+
+                    category:
+                      student.category,
+                  })
+                ),
+            });
+          }
+        }
+
+        // ----------------------------------------------------
+        // Save Overall aggregate summary
+        //
+        // CLASS:
+        //   Only explicit Save Overall after SUBMITTED.
+        //
+        // GRADE / SECTION / SCHOOL:
+        //   Save the aggregate snapshot immediately.
+        // ----------------------------------------------------
+
+        const shouldSaveOverallSummary =
+          data.assessmentScope ===
+            "OVERALL" &&
+          overallSummary &&
+          (
+            data.level !== "CLASS" ||
+            (
+              data.level ===
+                "CLASS" &&
+              saveOverallSummary &&
+              data.classId &&
+              resultSubmissionId
+            )
+          );
+
+        if (
+          shouldSaveOverallSummary &&
+          overallSummary
+        ) {
+          await tx.performanceAnalysisSummary.create({
+            data: {
+              performanceAnalysisId:
+                createdAnalysis.id,
+
+              totalStudents:
+                overallSummary.totalStudents,
+
+              totalMale:
+                overallSummary.totalMale,
+
+              totalFemale:
+                overallSummary.totalFemale,
+
+              excellentMale:
+                overallSummary.excellentMale,
+
+              excellentFemale:
+                overallSummary.excellentFemale,
+
+              excellentTotal:
+                overallSummary.excellentTotal,
+
+              veryGoodMale:
+                overallSummary.veryGoodMale,
+
+              veryGoodFemale:
+                overallSummary.veryGoodFemale,
+
+              veryGoodTotal:
+                overallSummary.veryGoodTotal,
+
+              averageMale:
+                overallSummary.averageMale,
+
+              averageFemale:
+                overallSummary.averageFemale,
+
+              averageTotal:
+                overallSummary.averageTotal,
+
+              poorMale:
+                overallSummary.poorMale,
+
+              poorFemale:
+                overallSummary.poorFemale,
+
+              poorTotal:
+                overallSummary.poorTotal,
+
+              failMale:
+                overallSummary.failMale,
+
+              failFemale:
+                overallSummary.failFemale,
+
+              failTotal:
+                overallSummary.failTotal,
+            },
+          });
+        }
+      }
+    );
+  }
+
+  // ==========================================================
+  // SUCCESS
+  // ==========================================================
+
+  return {
+    success: true,
+    error: false,
+  };
+};
+
+// ============================================================
+// CREATE PERFORMANCE ANALYSIS
+// ============================================================
+
+export const createPerformanceAnalysis = async (
+  currentState: CurrentState,
+  formData:
+    | FormData
+    | PerformanceAnalysisSchema
+) => {
+  try {
+    const {
+      userId,
+      sessionClaims,
+    } = auth();
+
+    const role =
+      (
+        sessionClaims?.metadata as {
+          role?: string;
+        }
+      )?.role;
+
+    if (
+      !userId ||
+      (
+        role !== "admin" &&
+        role !== "teacher"
+      )
+    ) {
+      return {
+        success: false,
+        error: true,
+      };
+    }
+
+    const data =
+      parsePerformanceAnalysisFormData(
+        formData
+      );
+
+    return await rebuildPerformanceAnalysis(
+      data,
+      userId,
+      role
+    );
+  } catch (err) {
+    console.log(
+      "CREATE PERFORMANCE ANALYSIS ERROR:",
+      err
+    );
+
+    return {
+      success: false,
+      error: true,
+    };
+  }
+};
+
+// ============================================================
+// UPDATE PERFORMANCE ANALYSIS
+// ============================================================
+
+export const updatePerformanceAnalysis = async (
+  currentState: CurrentState,
+  formData:
+    | FormData
+    | PerformanceAnalysisSchema
+) => {
+  try {
+    const {
+      userId,
+      sessionClaims,
+    } = auth();
+
+    const role =
+      (
+        sessionClaims?.metadata as {
+          role?: string;
+        }
+      )?.role;
+
+    if (
+      !userId ||
+      (
+        role !== "admin" &&
+        role !== "teacher"
+      )
+    ) {
+      return {
+        success: false,
+        error: true,
+      };
+    }
+
+    const data =
+      parsePerformanceAnalysisFormData(
+        formData
+      );
+
+    if (!data.id) {
+      return {
+        success: false,
+        error: true,
+      };
+    }
+
+    // ========================================================
+    // GET EXISTING ANALYSIS
+    // ========================================================
+
+    const existingAnalysis =
+      await prisma.performanceAnalysis.findUnique({
+        where: {
+          id: data.id,
+        },
+
+        select: {
+          id: true,
+          createdByAdminId: true,
+          createdByTeacherId: true,
+          assessmentScope: true,
+          resultSubmissionId: true,
+        },
+      });
+
+    if (!existingAnalysis) {
+      return {
+        success: false,
+        error: true,
+      };
+    }
+
+    // ========================================================
+    // TEACHER OWNERSHIP CHECK
+    // ========================================================
+
+    if (role === "teacher") {
+      const teacher =
+        await prisma.teacher.findUnique({
+          where: {
+            clerkUserId: userId,
+          },
+          select: {
+            id: true,
+          },
+        });
+
+      if (
+        !teacher ||
+        existingAnalysis.createdByTeacherId !==
+          teacher.id
+      ) {
+        return {
+          success: false,
+          error: true,
+        };
+      }
+    }
+
+    // ========================================================
+    // REBUILD
+    // ========================================================
+
+    return await rebuildPerformanceAnalysis(
+      data,
+      userId,
+      role,
+      existingAnalysis
+    );
+  } catch (err) {
+    console.log(
+      "UPDATE PERFORMANCE ANALYSIS ERROR:",
+      err
+    );
+
+    return {
+      success: false,
+      error: true,
+    };
+  }
+};
+
+// ============================================================
+// SAVE CLASS-LEVEL OVERALL PERFORMANCE ANALYSIS
+//
+// This is the ONLY operation that permanently links a CLASS
+// Overall Analysis to the exact submitted ResultSubmission.
+//
+// GRADE / SECTION / SCHOOL Overall snapshots cannot be saved
+// through this action.
+// ============================================================
+
+export const saveOverallPerformanceAnalysis = async (
+  formData: FormData
+) => {
+  try {
+    const {
+      userId,
+      sessionClaims,
+    } = auth();
+
+    const role =
+      (
+        sessionClaims?.metadata as {
+          role?: string;
+        }
+      )?.role;
+
+    if (
+      !userId ||
+      (
+        role !== "admin" &&
+        role !== "teacher"
+      )
+    ) {
+      return {
+        success: false,
+        error: true,
+      };
+    }
+
+    const analysisId =
+      Number(formData.get("id"));
+
+    if (
+      !Number.isInteger(analysisId) ||
+      analysisId <= 0
+    ) {
+      return {
+        success: false,
+        error: true,
+      };
+    }
+
+    // ========================================================
+    // GET EXISTING ANALYSIS
+    // ========================================================
+
+    const existingAnalysis =
+      await prisma.performanceAnalysis.findUnique({
+        where: {
+          id: analysisId,
+        },
+
+        select: {
+          id: true,
+
+          academicYearId: true,
+          semester: true,
+
+          level: true,
+
+          section: true,
+          gradeId: true,
+          classId: true,
+          subjectId: true,
+
+          assessmentScope: true,
+
+          createdByAdminId: true,
+          createdByTeacherId: true,
+
+          resultSubmissionId: true,
+        },
+      });
+
+    if (!existingAnalysis) {
+      return {
+        success: false,
+        error: true,
+      };
+    }
+
+    // ========================================================
+    // ONLY CLASS OVERALL CAN BE PERMANENTLY SAVED
+    // ========================================================
+
+    if (
+      existingAnalysis.assessmentScope !==
+        "OVERALL" ||
+      existingAnalysis.level !==
+        "CLASS" ||
+      !existingAnalysis.classId
+    ) {
+      return {
+        success: false,
+        error: true,
+      };
+    }
+
+    // ========================================================
+    // TEACHER OWNERSHIP
+    // ========================================================
+
+    if (role === "teacher") {
+      const teacher =
+        await prisma.teacher.findUnique({
+          where: {
+            clerkUserId: userId,
+          },
+          select: {
+            id: true,
+          },
+        });
+
+      if (
+        !teacher ||
+        existingAnalysis.createdByTeacherId !==
+          teacher.id
+      ) {
+        return {
+          success: false,
+          error: true,
+        };
+      }
+    }
+
+    // ========================================================
+    // GET EXACT RESULT SUBMISSION
+    // ========================================================
+
+    const submission =
+      await prisma.resultSubmission.findUnique({
+        where: {
+          academicYearId_classId_subjectId_semester: {
+            academicYearId:
+              existingAnalysis.academicYearId,
+
+            classId:
+              existingAnalysis.classId,
+
+            subjectId:
+              existingAnalysis.subjectId!,
+
+            semester:
+              existingAnalysis.semester,
+          },
+        },
+
+        select: {
+          id: true,
+          status: true,
+        },
+      });
+
+    if (
+      !submission ||
+      submission.status !==
+        "SUBMITTED"
+    ) {
+      return {
+        success: false,
+        error: true,
+      };
+    }
+
+    // ========================================================
+    // REBUILD AND PERMANENTLY SAVE
+    // ========================================================
+
+    const data:
+      PerformanceAnalysisSchema = {
+      id:
+        existingAnalysis.id,
+
+      academicYearId:
+        existingAnalysis.academicYearId,
+
+      semester:
+        existingAnalysis.semester,
+
+      level:
+        existingAnalysis.level,
+
+      section:
+        existingAnalysis.section ??
+        undefined,
+
+      gradeId:
+        existingAnalysis.gradeId ??
+        undefined,
+
+      classId:
+        existingAnalysis.classId ??
+        undefined,
+
+      subjectId:
+        existingAnalysis.subjectId!,
+
+      assessmentScope:
+        "OVERALL",
+
+      assessmentType:
+        undefined,
+    };
+
+    return await rebuildPerformanceAnalysis(
+      data,
+      userId,
+      role,
+      {
+        id:
+          existingAnalysis.id,
+
+        createdByAdminId:
+          existingAnalysis.createdByAdminId,
+
+        createdByTeacherId:
+          existingAnalysis.createdByTeacherId,
+
+        assessmentScope:
+          existingAnalysis.assessmentScope,
+
+        resultSubmissionId:
+          existingAnalysis.resultSubmissionId,
+      },
+      true
+    );
+  } catch (err) {
+    console.log(
+      "SAVE OVERALL PERFORMANCE ANALYSIS ERROR:",
+      err
+    );
+
+    return {
+      success: false,
+      error: true,
+    };
+  }
+};
+
+// ============================================================
+// DELETE PERFORMANCE ANALYSIS
+// ============================================================
+
+export const deletePerformanceAnalysis = async (
+  currentState: CurrentState,
+  formData:
+    | FormData
+    | PerformanceAnalysisSchema
+) => {
+  try {
+    const {
+      userId,
+      sessionClaims,
+    } = auth();
+
+    const role =
+      (
+        sessionClaims?.metadata as {
+          role?: string;
+        }
+      )?.role;
+
+    if (
+      !userId ||
+      (
+        role !== "admin" &&
+        role !== "teacher"
+      )
+    ) {
+      return {
+        success: false,
+        error: true,
+      };
+    }
+
+    const data =
+      parsePerformanceAnalysisFormData(
+        formData
+      );
+
+    if (!data.id) {
+      return {
+        success: false,
+        error: true,
+      };
+    }
+
+    // ========================================================
+    // GET EXISTING ANALYSIS
+    // ========================================================
+
+    const existingAnalysis =
+      await prisma.performanceAnalysis.findUnique({
+        where: {
+          id: data.id,
+        },
+
+        select: {
+          id: true,
+          createdByAdminId: true,
+          createdByTeacherId: true,
+        },
+      });
+
+    if (!existingAnalysis) {
+      return {
+        success: false,
+        error: true,
+      };
+    }
+
+    // ========================================================
+    // TEACHER OWNERSHIP CHECK
+    // ========================================================
+
+    if (role === "teacher") {
+      const teacher =
+        await prisma.teacher.findUnique({
+          where: {
+            clerkUserId: userId,
+          },
+
+          select: {
+            id: true,
+          },
+        });
+
+      if (
+        !teacher ||
+        existingAnalysis.createdByTeacherId !==
+          teacher.id
+      ) {
+        return {
+          success: false,
+          error: true,
+        };
+      }
+    }
+
+    // ========================================================
+    // DELETE
+    //
+    // Child records are removed by the existing Prisma
+    // relations/cascade configuration.
+    // ========================================================
+
+    await prisma.performanceAnalysis.delete({
+      where: {
+        id:
+          existingAnalysis.id,
+      },
+    });
+
+    return {
+      success: true,
+      error: false,
+    };
+  } catch (err) {
+    console.log(
+      "DELETE PERFORMANCE ANALYSIS ERROR:",
+      err
+    );
 
     return {
       success: false,

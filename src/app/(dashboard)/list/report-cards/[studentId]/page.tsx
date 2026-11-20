@@ -1300,46 +1300,48 @@ const StudentReportCardPage = async ({
         <PrintButton />
 
         {reportCard && (
-          <FormContainer
-            table="reportCard"
-            type="update"
-            data={{
-              reportCard,
-              student,
-              enrollment,
-              academicYear,
-              semesters:
-                reportCard.semesters,
-              basicSkills,
-              subjectResults,
-              studentAverage,
-              studentRank,
-              classSize,
+          <>
+            {/* UPDATE */}
+            <FormContainer
+              table="reportCard"
+              type="update"
+              data={{
+                reportCard,
+                student,
+                enrollment,
+                academicYear,
+                semesters:
+                  reportCard.semesters,
+                basicSkills,
+                subjectResults,
+                studentAverage,
+                studentRank,
+                classSize,
+                absentDays,
+                semester1AbsentDays,
+                semester2AbsentDays,
+                annualAbsentDays,
 
-              /*
-               * Attendance values
-               *
-               * Annual value retained for compatibility.
-               * Semester values are also provided explicitly.
-               */
-              absentDays,
-              semester1AbsentDays,
-              semester2AbsentDays,
-              annualAbsentDays,
+                currentGrade,
+                nextGrade,
+                promotionStatus:
+                  promotionText,
+                parentDisplayName,
+                semester1TeacherName,
+                semester2TeacherName,
+                managingDirectorDisplayName,
+                role,
+              }}
+            />
 
-              currentGrade,
-              nextGrade,
-              promotionStatus:
-                promotionText,
-              parentDisplayName,
-              semester1TeacherName,
-              semester2TeacherName,
-              managingDirectorDisplayName,
-              role,
-            }}
-          />
+            {/* DELETE */}
+            <FormContainer
+              table="reportCard"
+              type="delete"
+              id={reportCard.id}
+            />
+          </>
         )}
-
       </div>
 
       <div className="report-print-root">

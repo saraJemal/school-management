@@ -1,3 +1,4 @@
+
 @import "tailwindcss/base";
 @import "tailwindcss/components";
 @import "tailwindcss/utilities";
@@ -39,9 +40,28 @@
 .rbc-time-view{
   border-color: #eee !important;
 }
-.rbc-time-header{
+/* Show weekday and date headers */
+.rbc-time-header {
+  display: flex !important;
+  border-bottom: 1px solid #eee !important;
+}
+
+.rbc-time-header-content {
+  border-left: 1px solid #eee !important;
+}
+
+.rbc-header {
+  padding: 8px 2px !important;
+  text-align: center !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  white-space: normal !important;
+}
+/* Remove the empty all-day row below the date headers */
+.rbc-allday-cell {
   display: none !important;
 }
+
 .rbc-time-content{
   border: none !important;
 }
@@ -57,12 +77,17 @@
   .rbc-day-slot{
     font-size: 14px !important;
   }
-  .rbc-event {
+ .rbc-event {
+  box-sizing: border-box !important;
   border: none !important;
   color: black !important;
-  padding: 10px !important;
-  margin: 10px !important;
-  width: 99% !important;
+  padding: 6px !important;
+  margin: 2px !important;
+  width: calc(100% - 4px) !important;
+  max-width: calc(100% - 4px) !important;
+  min-width: 0 !important;
+  overflow: hidden !important;
+  overflow-wrap: anywhere !important;
 }
 
 .rbc-event:nth-child(1) {
@@ -93,4 +118,119 @@
 .rbc-event-label{
   color: gray !important;
   margin-bottom: 5px;
+}
+
+/* Event content: shared styles */
+.rbc-event-label,
+.rbc-event-content {
+  min-width: 0 !important;
+  line-height: 1.2 !important;
+  box-sizing: border-box !important;
+}
+
+/* SM and MD: time range above lesson name */
+@media (max-width: 1023px) {
+  .rbc-event-label {
+    display: block !important;
+    float: none !important;
+    width: 100% !important;
+    margin: 0 0 3px 0 !important;
+    color: gray !important;
+    font-size: 10px !important;
+    white-space: normal !important;
+    overflow-wrap: anywhere !important;
+  }
+
+  .rbc-event-content {
+    display: block !important;
+    width: 100% !important;
+    font-size: 11px !important;
+    white-space: normal !important;
+    overflow-wrap: anywhere !important;
+    word-break: break-word !important;
+  }
+}
+
+/* LG and larger: time range and lesson name on one line */
+@media (min-width: 1024px) {
+  .rbc-event {
+    padding: 5px 8px !important;
+  }
+
+  .rbc-event-label {
+    display: inline !important;
+    float: none !important;
+    width: auto !important;
+    margin: 0 6px 0 0 !important;
+    color: gray !important;
+    font-size: 11px !important;
+    white-space: nowrap !important;
+  }
+
+  .rbc-event-content {
+    display: inline !important;
+    font-size: 12px !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+  }
+}
+
+/* Keep the time gutter compact on tablet and mobile */
+@media (max-width: 768px) {
+  .rbc-time-gutter.rbc-time-column {
+    font-size: 10px !important;
+  }
+
+  .rbc-time-gutter.rbc-time-column .rbc-timeslot-group {
+    padding: 0 3px !important;
+  }
+
+  .rbc-header {
+    font-size: 11px !important;
+    padding: 6px 1px !important;
+  }
+
+  .rbc-day-slot {
+    font-size: 11px !important;
+  }
+
+  .rbc-event {
+    padding: 3px !important;
+    margin: 1px !important;
+    width: calc(100% - 2px) !important;
+    max-width: calc(100% - 2px) !important;
+  }
+
+  .rbc-toolbar-label {
+    padding: 0 5px !important;
+    font-size: 12px !important;
+  }
+
+  .rbc-btn-group:last-child {
+    font-size: 11px !important;
+  }
+
+  .rbc-btn-group:last-child button {
+    padding: 4px 6px !important;
+  }
+}
+
+/* Very small phones */
+@media (max-width: 480px) {
+  .rbc-header {
+    font-size: 5px !important;
+  }
+
+  .rbc-time-gutter.rbc-time-column {
+    font-size: 5px !important;
+  }
+
+  .rbc-event {
+    padding: 1px !important;
+  }
+
+  .rbc-event-content {
+    font-size: 5px !important;
+  }
 }

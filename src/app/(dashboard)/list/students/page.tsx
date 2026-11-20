@@ -38,7 +38,6 @@ const StudentListPage = async ({
     {
       header: "Student ID",
       accessor: "studentId",
-      className: "hidden md:table-cell",
     },
     {
       header: "Grade",
@@ -96,7 +95,7 @@ const StudentListPage = async ({
         </td>
 
         {/* STUDENT ID */}
-        <td className="hidden md:table-cell">
+        <td >
           {item.id}
         </td>
 

@@ -2,7 +2,7 @@
 
 import { useForm } from "react-hook-form";
 import InputField from "../InputField";
-import { classSchema, ClassSchema } from "@/lib/formValidationSchemas";
+import { classSchema} from "@/lib/formValidationSchemas";
 import { createClass,  updateClass,  } from "@/lib/actions";
 import { useFormState } from "react-dom";
 import { Dispatch, SetStateAction, useEffect } from "react";

@@ -13,6 +13,11 @@ import {
   deleteAdmin,
   deletePromotionPolicy,
   deleteAcademicYear,
+  deleteReportCard,
+  deleteCommunicationBook,
+  deleteWeeklyProgress,
+  deleteMessage,
+   deletePerformanceAnalysis,
 } from "@/lib/actions";
 
 import dynamic from "next/dynamic";
@@ -47,6 +52,11 @@ const deleteActionMap = {
   announcement: deleteSubject,
   promotionPolicy: deletePromotionPolicy,
   academicYear: deleteAcademicYear,
+  reportCard: deleteReportCard,
+  communicationBook: deleteCommunicationBook,
+  weeklyProgress: deleteWeeklyProgress,
+  message: deleteMessage,
+  performanceAnalysis: deletePerformanceAnalysis,
 };
 
 // ---------------------------------------------------------
@@ -143,6 +153,45 @@ const AcademicYearForm = dynamic(
     loading: () => <h1>Loading...</h1>,
   }
 );
+
+const CommunicationBookForm = dynamic(
+  () => import("./forms/CommunicationBookForm"),
+  { loading: () => <h1>Loading...</h1> }
+);
+
+const CommunicationBookParentForm = dynamic(
+  () => import("./forms/CommunicationBookParentForm"),
+  {
+    loading: () => <h1>Loading...</h1>,
+  }
+);
+
+const WeeklyProgressForm = dynamic(
+  () => import("./forms/WeeklyProgressForm"),
+  { loading: () => <h1>Loading...</h1> }
+);
+
+const MessageForm = dynamic(
+  () => import("./forms/MessageForm"),
+  {
+    loading: () => <h1>Loading...</h1>,
+  }
+);
+
+const MessageView = dynamic(
+  () => import("./forms/MessageView"),
+  {
+    loading: () => <h1>Loading...</h1>,
+  }
+);
+
+const PerformanceAnalysisForm = dynamic(
+  () => import("./forms/PerformanceAnalysisForm"),
+  {
+    loading: () => <h1>Loading...</h1>,
+  }
+);
+
 
 // ---------------------------------------------------------
 // EXISTING CREATE / UPDATE FORMS
@@ -276,6 +325,47 @@ const forms: {
   />
 ),
 
+communicationBook: (
+  setOpen,
+  type,
+  data,
+  relatedData
+) => (
+  <CommunicationBookForm
+    type={type}
+    data={data}
+    setOpen={setOpen}
+    relatedData={relatedData}
+  />
+),
+
+weeklyProgress: (setOpen, type, data, relatedData) => (
+  <WeeklyProgressForm
+    type={type}
+    data={data}
+    setOpen={setOpen}
+    relatedData={relatedData}
+  />
+),
+
+message: (setOpen, type, data, relatedData) => (
+  <MessageForm
+    type={type}
+    data={data}
+    setOpen={setOpen}
+    relatedData={relatedData}
+  />
+),
+
+performanceAnalysis: (setOpen, type, data, relatedData) => (
+  <PerformanceAnalysisForm
+    type={type}
+    data={data}
+    setOpen={setOpen}
+    relatedData={relatedData}
+  />
+),
+
 };
 
 // ---------------------------------------------------------
@@ -352,8 +442,9 @@ const DeleteForm = ({
       />
 
       <span className="text-center font-medium">
-        All data will be lost. Are you sure you want to
-        delete this {table}?
+        {table === "reportCard"
+          ? "This report card and all of its semester and basic-skill data will be permanently deleted. Are you sure?"
+          : `All data will be lost. Are you sure you want to delete this ${table}?`}
       </span>
 
       <button
@@ -468,6 +559,7 @@ const FormModal = ({
   data,
   id,
   relatedData,
+  mode,
 }: FormContainerProps & {
   relatedData?: any;
 }) => {
@@ -477,91 +569,79 @@ const FormModal = ({
       : "w-7 h-7";
 
   const bgColor =
-    type === "create"
-      ? "bg-badirStar"
-      : type === "update"
-      ? "bg-slate-500"
-      : type === "resetPassword"
-      ? "bg-slate-500"
-      : "bg-red-400";
+  type === "create"
+    ? "bg-badirStar"
+    : type === "update"
+    ? "bg-slate-500"
+    : type === "view"
+    ? "bg-slate-500"
+    : type === "resetPassword"
+    ? "bg-slate-500"
+    : "bg-red-400";
 
   const [open, setOpen] =
     useState(false);
 
   const Form = () => {
-    if (
-      type === "delete" &&
-      table === "assessmentRow"
-    ) {
+        /*
+        * DELETE
+        */
+        if (type === "delete") {
+          if (id === undefined) {
+            return null;
+          }
+
+          if (!(table in deleteActionMap)) {
+            return null;
+          }
+
+          return (
+            <DeleteForm
+              table={table as keyof typeof deleteActionMap}
+              id={id}
+              setOpen={setOpen}
+            />
+          );
+        }
+
+        /*
+        * VIEW
+        */
+        if (type === "view" && table === "message") {
+          return (
+            <MessageView
+              data={data}
+              setOpen={setOpen}
+            />
+          );
+        }
+
+       /*
+ * CREATE / UPDATE
+ */
+  if (type === "create" || type === "update") {
+    if (table === "communicationBook" && mode === "parent") {
+      if (type !== "update") {
+        return null;
+      }
+
       return (
-        <AssessmentRowDeleteForm
+        <CommunicationBookParentForm
           data={data}
           setOpen={setOpen}
         />
       );
     }
 
-    if (
-      type === "delete" &&
-      id
-    ) {
-      if (!(table in deleteActionMap)) {
-        return "Delete form not found!";
-      }
-
-      return (
-        <DeleteForm
-          table={
-            table as keyof typeof deleteActionMap
-          }
-          id={id}
-          setOpen={setOpen}
-        />
-      );
-    }
-
-    if (
-      type === "resetPassword" &&
-      id &&
-      [
-        "admin",
-        "teacher",
-        "parent",
-        "student",
-      ].includes(table)
-    ) {
-      return (
-        <ResetPasswordForm
-          table={
-            table as
-              | "admin"
-              | "teacher"
-              | "parent"
-              | "student"
-          }
-          id={String(id)}
-          name={data?.name ?? ""}
-          surname={data?.surname ?? ""}
-          setOpen={setOpen}
-        />
-      );
-    }
-
-    if (
-      type === "create" ||
-      type === "update"
-    ) {
-      return forms[table](
-        setOpen,
-        type,
-        data,
-        relatedData
-      );
-    }
-
-    return "Form not found!";
-  };
-
+    return forms[table](
+      setOpen,
+      type,
+      data,
+      relatedData
+    );
+  }
+        return null;
+      };
   return (
     <>
       <button

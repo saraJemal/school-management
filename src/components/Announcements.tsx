@@ -5,23 +5,41 @@ import { LocalDate } from "./LocalDate";
 const Announcements = async () => {
   const { userId, sessionClaims } = await auth();
 
-  const role = (sessionClaims?.metadata as { role?: string })?.role;
+  const role = (sessionClaims?.metadata as {
+    role?: string;
+  })?.role;
 
-  let roleCondition = {};
+  // Class IDs associated with the current user.
+  let classIds: number[] = [];
 
   // ----------------------------------------------------------
   // TEACHER
+  // Clerk user ID is different from the database teacher ID.
   // ----------------------------------------------------------
   if (role === "teacher" && userId) {
-    roleCondition = {
-      class: {
-        lessons: {
-          some: {
-            teacherId: userId,
-          },
-        },
+    const teacher = await prisma.teacher.findUnique({
+      where: {
+        clerkUserId: userId,
       },
-    };
+      select: {
+        id: true,
+      },
+    });
+
+    if (teacher) {
+      const lessons = await prisma.lesson.findMany({
+        where: {
+          teacherId: teacher.id,
+        },
+        select: {
+          classId: true,
+        },
+      });
+
+      classIds = [
+        ...new Set(lessons.map((lesson) => lesson.classId)),
+      ];
+    }
   }
 
   // ----------------------------------------------------------
@@ -47,94 +65,99 @@ const Announcements = async () => {
         },
       });
 
-      const classIds = enrollments.map(
-        (enrollment) => enrollment.classId
-      );
-
-      roleCondition =
-        classIds.length > 0
-          ? {
-              classId: {
-                in: classIds,
-              },
-            }
-          : {
-              classId: -1,
-            };
-    } else {
-      roleCondition = {
-        classId: -1,
-      };
+      classIds = [
+        ...new Set(enrollments.map((enrollment) => enrollment.classId)),
+      ];
     }
   }
 
   // ----------------------------------------------------------
   // PARENT
+  // Resolve the parent database ID before looking up children.
   // ----------------------------------------------------------
   if (role === "parent" && userId) {
-    const students = await prisma.student.findMany({
+    const parent = await prisma.parent.findUnique({
       where: {
-        parentId: userId,
+        clerkUserId: userId,
       },
       select: {
         id: true,
       },
     });
 
-    const studentIds = students.map((student) => student.id);
+    if (parent) {
+      const students = await prisma.student.findMany({
+        where: {
+          parentId: parent.id,
+        },
+        select: {
+          id: true,
+        },
+      });
 
-    const enrollments =
-      studentIds.length > 0
-        ? await prisma.studentEnrollment.findMany({
-            where: {
-              studentId: {
-                in: studentIds,
-              },
-            },
-            select: {
-              classId: true,
-            },
-          })
-        : [];
+      const studentIds = students.map((student) => student.id);
 
-    const classIds = enrollments.map(
-      (enrollment) => enrollment.classId
-    );
-
-    roleCondition =
-      classIds.length > 0
-        ? {
-            classId: {
-              in: classIds,
+      if (studentIds.length > 0) {
+        const enrollments = await prisma.studentEnrollment.findMany({
+          where: {
+            studentId: {
+              in: studentIds,
             },
-          }
-        : {
-            classId: -1,
-          };
+          },
+          select: {
+            classId: true,
+          },
+        });
+
+        classIds = [
+          ...new Set(enrollments.map((enrollment) => enrollment.classId)),
+        ];
+      }
+    }
   }
+
 
   // ----------------------------------------------------------
   // GET ANNOUNCEMENTS
+  // Admin: all announcements.
+  // Other roles: school-wide announcements plus announcements
+  // for classes associated with their lessons/enrollments.
   // ----------------------------------------------------------
   const data = await prisma.announcement.findMany({
     take: 3,
     orderBy: {
       date: "desc",
     },
-    where: {
-      ...(role !== "admin" && {
-        OR: [
-          // School-wide announcements
-          {
-            classId: null,
-          },
+    ...(role === "admin"
+      ? {}
+      : {
+          where: {
+            OR: [
+              // School-wide announcements
+              {
+                classId: null,
+              },
 
-          // Role-specific class announcements
-          roleCondition,
-        ],
-      }),
-    },
+              // Announcements for associated classes
+              ...(classIds.length > 0
+                ? [
+                    {
+                      classId: {
+                        in: classIds,
+                      },
+                    },
+                  ]
+                : []),
+            ],
+          },
+        }),
   });
+
+  const announcementColors = [
+    "bg-saraSkyLight",
+    "bg-saraPurpleLight",
+    "bg-saraYellowLight",
+  ];
 
   return (
     <div className="bg-white p-4 rounded-md">
@@ -144,53 +167,32 @@ const Announcements = async () => {
       </div>
 
       <div className="flex flex-col gap-4 mt-4">
-        {data[0] && (
-          <div className="bg-lamaSkyLight rounded-md p-4">
-            <div className="flex items-center justify-between">
-              <h2 className="font-medium">{data[0].title}</h2>
+        {data.length === 0 && (
+          <p className="text-sm text-gray-400">
+            No announcements available.
+          </p>
+        )}
 
-              <span className="text-xs text-gray-400 bg-white rounded-md px-1 py-1">
-                <LocalDate time={data[0].date} type="date" />
+        {data.map((announcement, index) => (
+          <div
+            key={announcement.id}
+            className={`${announcementColors[index]} rounded-md p-4`}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="font-medium">
+                {announcement.title}
+              </h2>
+
+              <span className="shrink-0 text-xs text-gray-400 bg-white rounded-md px-1 py-1">
+                <LocalDate time={announcement.date} type="date" />
               </span>
             </div>
 
             <p className="text-sm text-gray-400 mt-1">
-              {data[0].description}
+              {announcement.description}
             </p>
           </div>
-        )}
-
-        {data[1] && (
-          <div className="bg-lamaPurpleLight rounded-md p-4">
-            <div className="flex items-center justify-between">
-              <h2 className="font-medium">{data[1].title}</h2>
-
-              <span className="text-xs text-gray-400 bg-white rounded-md px-1 py-1">
-                <LocalDate time={data[1].date} type="date" />
-              </span>
-            </div>
-
-            <p className="text-sm text-gray-400 mt-1">
-              {data[1].description}
-            </p>
-          </div>
-        )}
-
-        {data[2] && (
-          <div className="bg-lamaYellowLight rounded-md p-4">
-            <div className="flex items-center justify-between">
-              <h2 className="font-medium">{data[2].title}</h2>
-
-              <span className="text-xs text-gray-400 bg-white rounded-md px-1 py-1">
-                <LocalDate time={data[2].date} type="date" />
-              </span>
-            </div>
-
-            <p className="text-sm text-gray-400 mt-1">
-              {data[2].description}
-            </p>
-          </div>
-        )}
+        ))}
       </div>
     </div>
   );

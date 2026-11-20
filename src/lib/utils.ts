@@ -54,6 +54,7 @@ export const adjustScheduleToCurrentWeek = (lessons: any[]) => {
   adjustedStart.setHours(
     startTime.getHours(),
     startTime.getMinutes(),
+    startTime.getSeconds(),
     0
   );
 
@@ -62,6 +63,7 @@ export const adjustScheduleToCurrentWeek = (lessons: any[]) => {
   adjustedEnd.setHours(
     endTime.getHours(),
     endTime.getMinutes(),
+    endTime.getSeconds(),
     0
   );
 
